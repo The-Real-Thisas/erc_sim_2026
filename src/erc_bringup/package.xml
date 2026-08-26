@@ -15,6 +15,8 @@
   <!-- Simulation -->
   <exec_depend>mujoco_ros2_control</exec_depend>
   <exec_depend>mujoco_ros2_control_plugins</exec_depend>
+  <!-- provides the mujoco.plugin.lidar engine plugin the model requires -->
+  <exec_depend>mujoco_3d_lidar</exec_depend>
   <exec_depend>omni_base_description</exec_depend>
   <exec_depend>joint_trajectory_controller</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>

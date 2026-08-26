@@ -219,7 +219,15 @@ def launch_setup(context, *args, **kwargs):
               'package is unavailable. Build it with: '
               'colcon build --packages-select sensors --symlink-install')
 
-    return [rsp, converter, control, depth_info_relay, imu_relay, odom_relay,
+    # topic_tools relay picks its publisher QoS from the first publisher it
+    # discovers on the input topic. Started at t=0 it can come up before the
+    # camera and the broadcaster exist and settle on a QoS nothing downstream
+    # matches - which showed up as depth_to_cloud silently never receiving
+    # camera_info and publishing no cloud at all. Start them once their inputs
+    # are real.
+    relays = TimerAction(period=8.0, actions=[depth_info_relay, imu_relay])
+
+    return [rsp, converter, control, relays, odom_relay,
             controllers, gripper_clamp, *depth_cloud]
 
 

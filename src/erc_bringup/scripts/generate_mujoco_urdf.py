@@ -8,7 +8,8 @@ one the competition ships: same links, masses, joint limits, meshes and
 ros2_control joint set. Applies only what MuJoCo needs:
 
   1. Strip every <gazebo> element PAL's xacro emits (plugins, sensors,
-     friction tags) - MuJoCo reads none of them.
+     friction tags) - MuJoCo reads none of them - along with the transmissions
+     and the two laser housings (see strip_laser_housings).
   2. Swap the hardware plugin PAL's xacro emits for
      mujoco_ros2_control/MujocoSystemInterface reading the MJCF from a topic.
   3. Embed a <mujoco_inputs> block for the URDF->MJCF converter:
@@ -89,6 +90,10 @@ LASERS = (
     ('scan_front_raw', 'base_front_laser_link'),
     ('scan_rear_raw', 'base_rear_laser_link'),
 )
+# These are hand-copied from the <gazebo><sensor type="gpu_lidar"> blocks that
+# strip_gazebo_blocks deletes below, so nothing can cross-check them at runtime.
+# They match the shipped description char-for-char today; if PAL changes the
+# scanner spec, this is where it has to be changed too.
 LASER_SAMPLES = 818
 LASER_MIN_ANGLE = -2.3387411976724017
 LASER_MAX_ANGLE = 2.356194490192345
@@ -142,13 +147,22 @@ def strip_laser_housings(urdf: str) -> str:
         m = re.search(r'(<link name="' + re.escape(site) + r'"[^>]*>)(.*?)(</link>)',
                       urdf, re.S)
         if not m:
-            print(f'WARNING: no <link> for {site}; housing not stripped')
+            # A legitimate configuration: generate_urdf.py --laser_model
+            # no-laser produces a robot with no scanners at all, and the LASERS
+            # loop below skips them for the same reason.
+            print(f'note: no <link name="{site}">; this robot has no scanner there')
             continue
-        body, count = re.subn(r'[ \t]*<(visual|collision)>.*?</\1>\n?', '',
-                              m.group(2), flags=re.S)
-        if count:
-            urdf = urdf[:m.start()] + m.group(1) + body + m.group(3) + urdf[m.end():]
-            n += count
+        body, count = re.subn(r'[ \t]*<(visual|collision)(?:\s[^>]*)?>.*?</\1>\n?',
+                              '', m.group(2), flags=re.S)
+        # Half-stripping is worse than not stripping: whatever is left is
+        # opaque to the scanner's own rays and every one of the 818 samples
+        # comes back as the housing, which looks like a plausible scan.
+        if count != 2:
+            sys.exit(f'ERROR: expected one <visual> and one <collision> in '
+                     f'{site}, removed {count}. Refusing to ship a scanner '
+                     f'that would read its own housing.')
+        urdf = urdf[:m.start()] + m.group(1) + body + m.group(3) + urdf[m.end():]
+        n += count
     print(f'stripped {n} laser housing visual/collision elements')
     return urdf
 
@@ -233,6 +247,7 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'        <modify_element type="body" name="{m.group(1)}" gravcomp="1.0"/>')
     gravcomp = sorted(set(gravcomp))
 
+
     equalities = []
     superseded = 0
     for mimic, driven, mult in mimic_table(urdf):
@@ -277,6 +292,18 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
         sensors.append(f'        <gyro name="{IMU_SENSOR}_gyro" site="{IMU_SITE}"/>')
         sensors.append(
             f'        <accelerometer name="{IMU_SENSOR}_accel" site="{IMU_SITE}"/>')
+
+    # An <extension> naming mujoco.plugin.lidar makes the engine plugin a hard
+    # requirement of the model: if it is not loaded, compilation fails outright
+    # with "plugin mujoco.plugin.lidar not found" and the whole simulator dies.
+    # So emit it only when a scanner actually made it in.
+    lidar_extension = ''
+    if lidar_instances:
+        lidar_extension = ('      <extension>\n'
+                           '        <plugin plugin="mujoco.plugin.lidar">\n'
+                           + chr(10).join(lidar_instances) + '\n'
+                           '        </plugin>\n'
+                           '      </extension>\n')
 
     connects, excludes = [], []
     for grip in ('left', 'right'):
@@ -331,12 +358,7 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <actuator>
 {chr(10).join(actuators)}
       </actuator>
-      <extension>
-        <plugin plugin="mujoco.plugin.lidar">
-{chr(10).join(lidar_instances)}
-        </plugin>
-      </extension>
-      <sensor>
+{lidar_extension}      <sensor>
 {chr(10).join(sensors)}
       </sensor>
       <equality>

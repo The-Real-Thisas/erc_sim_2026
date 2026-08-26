@@ -60,14 +60,30 @@ bin?" is a geometry question, not a contact question), and `/joint_states`
 carries `effort` per joint (so grasp force is directly readable). Everything
 else on the topic tables below is present.
 
-One modelling note on the LiDARs. The lidar engine plugin casts its rays with
-no self-exclusion, and `mj_multiRay` filters by geom group and the static flag
-— *not* by `contype`/`conaffinity` — so a scanner whose own housing is in the
-model reads that housing on every ray, at 21 mm, whatever its collision flags
-say. The two housings are therefore dropped from the model entirely (see
-`strip_laser_housings` in `generate_mujoco_urdf.py`). They are 8 cm nubs well
-inside the base's own collision envelope, so contact behaviour is unchanged;
-they simply are not drawn.
+Three notes on the LiDARs.
+
+**The scanner housings are removed from the robot description.** The lidar
+engine plugin casts its rays with no self-exclusion, and `mj_multiRay` filters
+by geom group and the static flag — *not* by `contype`/`conaffinity` — so a
+scanner whose own housing is in the model reads that housing on every ray, at
+21 mm, whatever its collision flags say. (`mj_ray` does take a `bodyexclude`,
+which would be the tidier fix, but the extension hardcodes it to −1.) So
+`strip_laser_housings` in `generate_mujoco_urdf.py` deletes both links'
+`<visual>` and `<collision>`. That happens before the URDF reaches
+`robot_state_publisher`, so the housings are gone for RViz and MoveIt too, not
+just for the physics — their collision was a 10 mm cylinder sitting inside the
+base's own collision box, so nothing about contact changes, but a self-filter
+keyed on those links has nothing to filter.
+
+**The ranges are exact.** The robot description declares Gaussian range noise
+(σ = 0.01 m); the MuJoCo path does not model it. The depth camera's noise *is*
+modelled, by `sensors/depth_to_cloud`, so the two sensors are not equally
+realistic.
+
+**A ray that hits nothing returns −1, not `+inf`.** That is below `range_min`,
+so a conforming consumer discards it and no phantom obstacle appears — but a
+max-range ray is discarded rather than used to clear free space, which matters
+if you feed these scans to a costmap. `time_increment` and `scan_time` are 0.
 
 ### Launch arguments
 
@@ -239,7 +255,7 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `/spectator/color` | `sensor_msgs/msg/Image` | Fixed arena view |
 | `/spectator/depth` | `sensor_msgs/msg/Image` | |
 | `/spectator/camera_info` | `sensor_msgs/msg/CameraInfo` | |
-| `/model_states` | `mujoco_ros2_control_msgs/msg/FreeJointStateArray` | Ground-truth pose of every free body |
+| `/model_states` | `mujoco_ros2_control_msgs/msg/FreeJointStateArray` | Ground-truth pose of every free body, in the world frame (`frame_id` is left empty, which this message defines as world) |
 
 ### Sensor specifications
 
