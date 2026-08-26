@@ -8,6 +8,12 @@
       free_joint_state_publisher:
         type: "mujoco_ros2_control_plugins/FreeJointStatePublisherPlugin"
       mujoco_camera_plugin:
+        # Without a type the plugin is skipped and the cameras fall back to
+        # the deprecated auto-registration path. The key must be spelled
+        # exactly "mujoco_camera_plugin": CameraPlugin reads its parameters
+        # from that hard-coded prefix, not from the plugin key it was
+        # loaded under.
+        type: "mujoco_ros2_control_plugins/CameraPlugin"
         camera_publish_rate: 30.0
         head_front_camera:
           frame_name: "head_front_camera_color_optical_frame"
