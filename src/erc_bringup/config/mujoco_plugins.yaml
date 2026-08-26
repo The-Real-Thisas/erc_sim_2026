@@ -12,6 +12,17 @@
         hold_pose_on_idle: true
       free_joint_state_publisher:
         type: "mujoco_ros2_control_plugins/FreeJointStatePublisherPlugin"
+      # The key must be spelled exactly "mujoco_3d_lidar_plugin": like the
+      # camera plugin, it reads its parameters from that hard-coded prefix,
+      # not from the key it was loaded under.
+      mujoco_3d_lidar_plugin:
+        type: "mujoco_ros2_control_plugins/Mujoco3dLidarPlugin"
+        scan_front_raw:
+          frame_name: "base_front_laser_link"
+          topic: "/scan_front_raw"
+        scan_rear_raw:
+          frame_name: "base_rear_laser_link"
+          topic: "/scan_rear_raw"
       mujoco_camera_plugin:
         # Without a type the plugin is skipped and the cameras fall back to
         # the deprecated auto-registration path. The key must be spelled

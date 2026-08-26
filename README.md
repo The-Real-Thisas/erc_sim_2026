@@ -51,17 +51,23 @@ launch; the arena is generated as MJCF by
 colours and the number-marker order, and the same seed always produces the
 same arena.
 
-**Not currently simulated:** the base LiDARs (`/scan_front_raw`,
-`/scan_rear_raw`) and the contact sensors (`/contacts`, `/bin_contacts`).
-Everything else on the topic tables below is present, including `/base_imu`.
+**Not reproduced:** the contact sensors (`/contacts`, `/bin_contacts`).
+`mujoco_ros2_control` has no contact-sensor support at all, and rather than
+invent a bespoke message type for it, note that this stack already exposes
+strictly more information than the contact topics did: `/model_states` gives
+the ground-truth pose and twist of every free body (so "is the book in the
+bin?" is a geometry question, not a contact question), and `/joint_states`
+carries `effort` per joint (so grasp force is directly readable). Everything
+else on the topic tables below is present.
 
-The LiDARs are the more interesting gap. `mujoco_ros2_control` does ship a
-3D-lidar engine plugin, and it works — but it casts its rays from the sensor's
-own frame with no self-exclusion, and on this robot both scanners are mounted
-inside the base's collision hull. Every ray then returns the chassis at 21 mm.
-Fixing it means either patching the extension to exclude the robot body or
-carving the hull, so it is left out rather than shipped reading itself. Contact
-sensors have no equivalent in `mujoco_ros2_control` at all.
+One modelling note on the LiDARs. The lidar engine plugin casts its rays with
+no self-exclusion, and `mj_multiRay` filters by geom group and the static flag
+— *not* by `contype`/`conaffinity` — so a scanner whose own housing is in the
+model reads that housing on every ray, at 21 mm, whatever its collision flags
+say. The two housings are therefore dropped from the model entirely (see
+`strip_laser_housings` in `generate_mujoco_urdf.py`). They are 8 cm nubs well
+inside the base's own collision envelope, so contact behaviour is unchanged;
+they simply are not drawn.
 
 ### Launch arguments
 
@@ -116,8 +122,7 @@ TIAGo Pro by PAL Robotics — omnidirectional mobile manipulator.
 - Pan-tilt head (2 DOF)
 - Prismatic torso lift
 - Intel RealSense D435 RGB-D camera (head-mounted)
-- Two 270° LiDARs (front and rear, base-mounted) — *present in the robot
-  description, not currently simulated*
+- Two 270° LiDARs (front and rear, base-mounted)
 - IMU (base)
 
 ## ROS 2 topics and controllers
@@ -221,16 +226,16 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 
 | Topic | Type | Description |
 |---|---|---|
-| `/scan_front_raw` | `sensor_msgs/msg/LaserScan` | Front LiDAR — *not currently simulated* |
-| `/scan_rear_raw` | `sensor_msgs/msg/LaserScan` | Rear LiDAR — *not currently simulated* |
+| `/scan_front_raw` | `sensor_msgs/msg/LaserScan` | Front LiDAR |
+| `/scan_rear_raw` | `sensor_msgs/msg/LaserScan` | Rear LiDAR |
 | `/head_front_camera/head_front_camera/color/image_raw` | `sensor_msgs/msg/Image` | Head RGB camera |
 | `/head_front_camera/head_front_camera/color/camera_info` | `sensor_msgs/msg/CameraInfo` | Head RGB camera info |
 | `/head_front_camera/head_front_camera/depth/image_rect_raw` | `sensor_msgs/msg/Image` | Head depth camera (float32) |
 | `/head_front_camera/head_front_camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | Head depth camera info |
 | `/head_front_camera/head_front_camera/depth/color/points` | `sensor_msgs/msg/PointCloud2` | Rebuilt by `sensors/depth_to_cloud` |
 | `/base_imu` | `sensor_msgs/msg/Imu` | Base IMU, via `imu_sensor_broadcaster` |
-| `/contacts` | — | Contact sensors — *not currently simulated* |
-| `/bin_contacts` | — | *not currently simulated* |
+| `/contacts` | — | *not reproduced — use `/joint_states` effort and `/model_states`* |
+| `/bin_contacts` | — | *not reproduced — use `/model_states`* |
 | `/spectator/color` | `sensor_msgs/msg/Image` | Fixed arena view |
 | `/spectator/depth` | `sensor_msgs/msg/Image` | |
 | `/spectator/camera_info` | `sensor_msgs/msg/CameraInfo` | |
@@ -247,7 +252,7 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | **Head depth camera** | Resolution | 640 × 360 px |
 | | Depth range | 0.2 m near plane; the point cloud is clipped to 8 m by `sensors/depth_to_cloud` |
 | | Update rate | 30 Hz |
-| **Front / Rear LiDAR** | Model | SICK TIM551 *(not currently simulated)* |
+| **Front / Rear LiDAR** | Model | SICK TIM551 |
 | | FOV | ~270° |
 | | Range | 0.05 – 25.0 m |
 | | Samples | 818 (0.33°/step) |

@@ -80,6 +80,22 @@ FOUR_BAR_ANCHOR = {'left': '0.014 -0.001 0', 'right': '0.014 -0.0015 0'}
 HARDWARE_PLUGIN_RE = re.compile(r'<plugin>[^<]*(?:GazeboSystem|GazeboSimSystem|'
                                 r'MujocoSystem\w*)</plugin>')
 
+# The two base SICK scanners, matched to what the robot description declares:
+# 818 samples across 270 degrees at 10 Hz, 0.05-25 m. The lidar extension casts
+# rays in the site's own frame - x is azimuth zero, z is the scan normal - and
+# the converter emits one site per URDF link, so each scanner rides its own
+# link frame.
+LASERS = (
+    ('scan_front_raw', 'base_front_laser_link'),
+    ('scan_rear_raw', 'base_rear_laser_link'),
+)
+LASER_SAMPLES = 818
+LASER_MIN_ANGLE = -2.3387411976724017
+LASER_MAX_ANGLE = 2.356194490192345
+LASER_MIN_RANGE = 0.05
+LASER_MAX_RANGE = 25.0
+LASER_RATE = 10.0
+
 # The base IMU. mujoco_ros2_control builds a ros2_control IMU sensor out of
 # three MJCF sensors whose names share a base and take these suffixes, and
 # imu_sensor_broadcaster turns that into a sensor_msgs/Imu.
@@ -105,6 +121,35 @@ def strip_gazebo_blocks(urdf: str) -> str:
     if '<gazebo' in urdf:
         sys.exit('ERROR: gazebo blocks survived stripping')
     print(f'stripped {n} gazebo blocks')
+    return urdf
+
+
+def strip_laser_housings(urdf: str) -> str:
+    """Remove the scanners' own housing geometry.
+
+    The lidar extension casts its rays with no self-exclusion, and mj_multiRay
+    filters by geom group and the static flag - not by contype/conaffinity - so
+    a housing left in the model is hit by its own scanner whatever its collision
+    flags say. Measured: every one of the 818 rays returned the housing mesh at
+    20.6 mm. Both the visual and the collision element have to go, because the
+    converter emits a collision geom from the visual mesh as well.
+
+    The housings are 8 cm nubs sitting inside the base's own collision envelope,
+    so the robot's contact behaviour is unchanged; they simply stop being drawn.
+    """
+    n = 0
+    for _name, site in LASERS:
+        m = re.search(r'(<link name="' + re.escape(site) + r'"[^>]*>)(.*?)(</link>)',
+                      urdf, re.S)
+        if not m:
+            print(f'WARNING: no <link> for {site}; housing not stripped')
+            continue
+        body, count = re.subn(r'[ \t]*<(visual|collision)>.*?</\1>\n?', '',
+                              m.group(2), flags=re.S)
+        if count:
+            urdf = urdf[:m.start()] + m.group(1) + body + m.group(3) + urdf[m.end():]
+            n += count
+    print(f'stripped {n} laser housing visual/collision elements')
     return urdf
 
 
@@ -206,9 +251,25 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'polycoef="0 {mult:g} 0 0 0" '
             f'solimp="0.95 0.99 0.001" solref="0.005 1"/>')
 
-    # The base IMU. mujoco_ros2_control assembles a ros2_control IMU sensor
-    # from three MJCF sensors whose names share a base and take these suffixes.
-    sensors = []
+    lidar_instances, sensors = [], []
+    for name, site in LASERS:
+        if f'name="{site}"' not in urdf:
+            print(f'WARNING: {site} not in URDF, skipping {name}')
+            continue
+        lidar_instances.append(
+            f'          <instance name="{name}">\n'
+            f'            <config key="resolution" value="{LASER_SAMPLES} 1"/>\n'
+            f'            <config key="azimuth_range" '
+            f'value="{LASER_MIN_ANGLE:.10g} {LASER_MAX_ANGLE:.10g}"/>\n'
+            f'            <config key="elevation_range" value="0.0"/>\n'
+            f'            <config key="min_range" value="{LASER_MIN_RANGE:g}"/>\n'
+            f'            <config key="max_range" value="{LASER_MAX_RANGE:g}"/>\n'
+            f'            <config key="update_rate" value="{LASER_RATE:g}"/>\n'
+            f'            <config key="async" value="0"/>\n'
+            f'          </instance>')
+        sensors.append(
+            f'        <plugin name="{name}" instance="{name}" objtype="site" '
+            f'objname="{site}"/>')
     if f'name="{IMU_SITE}"' in urdf:
         sensors.append(
             f'        <framequat name="{IMU_SENSOR}_quat" objtype="site" '
@@ -270,6 +331,11 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <actuator>
 {chr(10).join(actuators)}
       </actuator>
+      <extension>
+        <plugin plugin="mujoco.plugin.lidar">
+{chr(10).join(lidar_instances)}
+        </plugin>
+      </extension>
       <sensor>
 {chr(10).join(sensors)}
       </sensor>
@@ -330,6 +396,7 @@ def main():
 
     urdf = strip_gazebo_blocks(urdf)
     urdf = strip_transmissions(urdf)
+    urdf = strip_laser_housings(urdf)
 
     hardware = f'''<plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
       <param name="mujoco_model_topic">/mujoco_robot_description</param>
