@@ -30,34 +30,48 @@ import sys
 
 from ament_index_python.packages import get_package_share_directory
 
-# PAL's own MuJoCo gains for the TIAGo Pro, from tiago_pro_simulation
-# (humble-devel, 1.19.0) tiago_pro_mujoco/config/pids.yaml. p becomes the
-# position actuator kp, u_clamp the forcerange.
+# PAL's own MuJoCo gains for the TIAGo Pro. kp and the force clamp come from
+# tiago_pro_simulation (humble-devel, 1.19.0) tiago_pro_mujoco/config/pids.yaml
+# (p -> kp, u_clamp -> forcerange); kv is PAL's own MuJoCo damping ladder from
+# pal_sea_arm_description/mujoco/mj_tags.xacro, which is tuned per arm joint
+# rather than derived. kv=None means PAL ships no damping for that joint, and
+# the actuator falls back to critical damping.
+#                                 kp        clamp    kv
 PAL_GAINS = {
-    'torso_lift_joint':           (10000.0, 2000.0),
-    'head_1_joint':               (2000.0, 5.197),
-    'head_2_joint':               (2000.0, 2.77),
-    'arm_left_1_joint':           (1000.0, 43.0),
-    'arm_left_2_joint':           (1000.0, 43.0),
-    'arm_left_3_joint':           (1000.0, 26.0),
-    'arm_left_4_joint':           (500.0, 26.0),
-    'arm_left_5_joint':           (1000.0, 26.0),
-    'arm_left_6_joint':           (1000.0, 26.0),
-    'arm_left_7_joint':           (500.0, 26.0),
-    'arm_right_1_joint':          (1000.0, 43.0),
-    'arm_right_2_joint':          (1000.0, 43.0),
-    'arm_right_3_joint':          (1000.0, 26.0),
-    'arm_right_4_joint':          (500.0, 26.0),
-    'arm_right_5_joint':          (1000.0, 26.0),
-    'arm_right_6_joint':          (1000.0, 26.0),
-    'arm_right_7_joint':          (500.0, 26.0),
+    'torso_lift_joint':           (10000.0, 2000.0, None),
+    'head_1_joint':               (2000.0,  5.197,  None),
+    'head_2_joint':               (2000.0,  2.77,   None),
+    'arm_left_1_joint':           (1000.0,  43.0,   50.0),
+    'arm_left_2_joint':           (1000.0,  43.0,   60.0),
+    'arm_left_3_joint':           (1000.0,  26.0,   50.0),
+    'arm_left_4_joint':           (500.0,   26.0,   20.0),
+    'arm_left_5_joint':           (1000.0,  26.0,   20.0),
+    'arm_left_6_joint':           (1000.0,  26.0,   20.0),
+    'arm_left_7_joint':           (500.0,   26.0,   20.0),
+    'arm_right_1_joint':          (1000.0,  43.0,   50.0),
+    'arm_right_2_joint':          (1000.0,  43.0,   60.0),
+    'arm_right_3_joint':          (1000.0,  26.0,   50.0),
+    'arm_right_4_joint':          (500.0,   26.0,   20.0),
+    'arm_right_5_joint':          (1000.0,  26.0,   20.0),
+    'arm_right_6_joint':          (1000.0,  26.0,   20.0),
+    'arm_right_7_joint':          (500.0,   26.0,   20.0),
     # Grippers: kp raised from PAL's 100 so the position servo can develop
     # the full 8 N force limit within the screw's travel; the clamp itself
     # stays PAL's number, so max pinch is unchanged in principle and the
     # grip force is decided by the force-targeted close in the pick script.
-    'gripper_left_finger_joint':  (300.0, 8.0),
-    'gripper_right_finger_joint': (300.0, 8.0),
+    'gripper_left_finger_joint':  (300.0,   8.0,    None),
+    'gripper_right_finger_joint': (300.0,   8.0,    None),
 }
+
+# The gripper is a four-bar linkage: the fingertip is pinned to BOTH the inner
+# finger (a URDF joint) and the outer finger (a loop the URDF cannot express,
+# so it fakes it with a <mimic> ratio). MuJoCo can close the loop for real, so
+# the fingertip's <connect> replaces its mimic equality rather than joining it:
+# pinch force then reacts through the outer finger as it does on the hardware,
+# instead of being carried entirely by a scripted joint ratio.
+# Anchors are in the fingertip body frame, from PAL's own call site
+# (pal_sea_arm_description/robots/pal_sea_arm.urdf.xacro).
+FOUR_BAR_ANCHOR = {'left': '0.014 -0.001 0', 'right': '0.014 -0.0015 0'}
 
 GZ_PLUGIN = '<plugin>gz_ros2_control/GazeboSimSystem</plugin>'
 
@@ -119,14 +133,15 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
     lims = joint_limits(urdf)
     root_body = root_link(urdf)
     actuators = []
-    for joint, (kp, clamp) in PAL_GAINS.items():
+    for joint, (kp, clamp, kv) in PAL_GAINS.items():
         if joint not in lims:
             print(f'WARNING: {joint} has no limits in URDF, skipping actuator')
             continue
         lo, hi = lims[joint]
+        damping = f'kv="{kv:g}"' if kv is not None else 'dampratio="1.0"'
         actuators.append(
             f'        <position name="{joint}" joint="{joint}" kp="{kp:g}" '
-            f'dampratio="1.0" ctrlrange="{lo:.6g} {hi:.6g}" '
+            f'{damping} ctrlrange="{lo:.6g} {hi:.6g}" '
             f'forcerange="{-clamp:g} {clamp:g}"/>')
 
     # PAL's real arm controllers apply gravity feedforward in firmware, so the
@@ -141,12 +156,44 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
     gravcomp = sorted(set(gravcomp))
 
     equalities = []
+    superseded = 0
     for mimic, driven, mult in mimic_table(urdf):
+        # Both halves of the four-bar go, not just the fingertip: with the
+        # outer finger still slaved to the screw by a ratio the loop is
+        # over-determined, and the solver back-drives the screw (measured
+        # 4.5 mm of tracking error and 5.4% jaw-gap slope error). Dropping
+        # both and letting <connect> close the loop reproduces the measured
+        # jaw-gap law exactly.
+        if re.match(r'gripper_(left|right)_(fingertip|outer_finger)_(left|right)_joint$',
+                    mimic):
+            superseded += 1
+            continue
         equalities.append(
             f'        <joint joint1="{mimic}" joint2="{driven}" '
             f'polycoef="0 {mult:g} 0 0 0" '
             f'solimp="0.95 0.99 0.001" solref="0.005 1"/>')
-    print(f'{len(actuators)} actuators, {len(equalities)} mimic equalities')
+
+    connects, excludes = [], []
+    for grip in ('left', 'right'):
+        for finger in ('left', 'right'):
+            tip = f'gripper_{grip}_fingertip_{finger}_link'
+            outer = f'gripper_{grip}_outer_finger_{finger}_link'
+            inner = f'gripper_{grip}_inner_finger_{finger}_link'
+            if f'name="{tip}"' not in urdf:
+                continue
+            connects.append(
+                f'        <connect name="four_bar_{grip}_{finger}" '
+                f'body1="{tip}" body2="{outer}" active="true" '
+                f'anchor="{FOUR_BAR_ANCHOR[finger]}" '
+                f'solimp="0.95 0.99 0.001" solref="0.005 1"/>')
+            # The links of a closed loop overlap at their shared pivot, so
+            # they must not also collide there.
+            excludes.append(f'        <exclude body1="{inner}" body2="{outer}"/>')
+            excludes.append(f'        <exclude body1="{tip}" body2="{outer}"/>')
+    equalities.extend(connects)
+    print(f'{len(actuators)} actuators, {len(equalities)} equalities '
+          f'({len(connects)} four-bar loop closures replacing {superseded} '
+          f'mimics), {len(excludes)} contact excludes')
 
     return f'''  <mujoco_inputs>
     <raw_inputs>
@@ -183,6 +230,9 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
       <equality>
 {chr(10).join(equalities)}
       </equality>
+      <contact>
+{chr(10).join(excludes)}
+      </contact>
     </raw_inputs>
     <processed_inputs>
       <!-- The converter treats the site as a REP-103 optical frame and applies
