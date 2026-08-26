@@ -8,7 +8,7 @@ RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' /etc/apt/s
 # 1. Tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-vcstool python3-colcon-common-extensions python3-rosdep \
-    python3-pip git wget curl lsb-release gnupg2 \
+    python3-pip python3-venv git wget curl lsb-release gnupg2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Gazebo Harmonic
@@ -41,13 +41,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-velocity-controllers \
     ros-humble-effort-controllers \
     ros-humble-realsense2-description \
+    ros-humble-topic-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. Workspace directory (source is mounted from host at runtime)
+# 4. MuJoCo backend
+# mujoco_ros2_control is vendored in src/, so this installs only what building
+# it needs: the MuJoCo library itself, the GL headers its camera plugin links
+# against, and the Python the URDF-to-MJCF converter imports.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-mujoco-vendor \
+    ros-humble-urdfdom-py \
+    ros-humble-backward-ros \
+    python3-pykdl \
+    python3-numpy \
+    libglfw3-dev \
+    libegl-dev \
+    libgl1-mesa-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# The converter runs from its own venv. Building it here rather than letting
+# the converter create it on first launch keeps the promise that no network
+# access is needed after cloning.
+COPY src/mujoco_ros2_control/mujoco_ros2_control/scripts/requirements.txt /tmp/mjcf-requirements.txt
+RUN python3 -m venv --system-site-packages /root/.ros/ros2_control/.venv \
+    && source /root/.ros/ros2_control/.venv/bin/activate \
+    && pip install --no-cache-dir --disable-pip-version-check \
+        -r /tmp/mjcf-requirements.txt pycollada \
+    && rm /tmp/mjcf-requirements.txt
+
+# 5. Workspace directory (source is mounted from host at runtime)
 ENV GZ_VERSION=harmonic
+ENV PYTHONDONTWRITEBYTECODE=1
 RUN mkdir -p /opt/erc_ws/src
 
-# 5. Entrypoint
+# 6. Entrypoint
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
