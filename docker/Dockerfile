@@ -46,10 +46,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # 4. MuJoCo backend
 # mujoco_ros2_control is vendored in src/, so this installs only what building
-# it needs: the MuJoCo library itself, the GL headers its camera plugin links
-# against, and the Python the URDF-to-MJCF converter imports.
+# it needs: the MuJoCo library itself, the CMake package both its CMakeLists
+# require, the GL headers its camera plugin links against, and the Python the
+# URDF-to-MJCF converter imports. ros2_control_cmake is normally pulled in by
+# the binary mujoco_ros2_control_plugins, which is deliberately not installed
+# here - without it both packages fail at find_package().
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-mujoco-vendor \
+    ros-humble-ros2-control-cmake \
     ros-humble-urdfdom-py \
     ros-humble-backward-ros \
     python3-pykdl \

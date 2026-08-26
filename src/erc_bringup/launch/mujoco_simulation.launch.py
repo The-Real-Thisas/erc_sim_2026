@@ -48,8 +48,13 @@ def launch_setup(context, *args, **kwargs):
     omni_assets = os.path.join(
         get_package_share_directory('omni_base_description'), 'mujoco', 'assets')
 
+    # A private directory per launch. Fixed /tmp names collide between two
+    # users on a shared machine and race between two concurrent launches,
+    # and the converter reads these files from a separate process.
+    workdir = tempfile.mkdtemp(prefix='erc_mujoco_')
+
     # ── The robot: competition URDF, retargeted at MuJoCo ──
-    urdf_out = os.path.join(tempfile.gettempdir(), 'erc_mujoco_robot.urdf')
+    urdf_out = os.path.join(workdir, 'robot.urdf')
     subprocess.run(
         [os.path.join(scripts, 'generate_mujoco_urdf.py'),
          '-o', urdf_out,
@@ -63,9 +68,13 @@ def launch_setup(context, *args, **kwargs):
 
     # ── The arena ──
     if scene_override:
+        if not os.path.exists(scene_override):
+            raise RuntimeError(
+                f'scene:={scene_override} does not exist. Pass an absolute path '
+                f'to an MJCF file, or omit the argument to generate the arena.')
         scene_path = scene_override
     else:
-        scene_path = os.path.join(tempfile.gettempdir(), 'erc_mujoco_world.xml')
+        scene_path = os.path.join(workdir, 'world.xml')
         cmd = [os.path.join(scripts, 'generate_mujoco_world.py'), '-o', scene_path]
         if seed:
             cmd += ['--seed', seed]
@@ -105,7 +114,15 @@ def launch_setup(context, *args, **kwargs):
         executable='ros2_control_node',
         output='both',
         emulate_tty=True,
-        parameters=[{'use_sim_time': True}, manager_cfg, plugins_cfg],
+        parameters=[
+            {'use_sim_time': True},
+            manager_cfg,
+            plugins_cfg,
+            # Last wins, so this is what makes camera_rate:= mean anything;
+            # the value in mujoco_plugins.yaml would otherwise always win.
+            {'mujoco_plugins.mujoco_camera_plugin.camera_publish_rate':
+                float(camera_rate)},
+        ],
         remappings=[('~/robot_description', '/robot_description')],
     )
 

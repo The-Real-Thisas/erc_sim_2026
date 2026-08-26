@@ -89,7 +89,9 @@ bool BaseVelocityPlugin::init(rclcpp::Node::SharedPtr node, const mjModel* model
   max_yaw_rate_ = declareOrGetParameter<double>(node_, "max_yaw_rate", max_yaw_rate_);
   const double cmd_timeout_sec = declareOrGetParameter<double>(node_, "cmd_timeout", 0.5);
   cmd_timeout_ = rclcpp::Duration::from_seconds(cmd_timeout_sec);
-  hold_pose_on_idle_ = declareOrGetParameter<bool>(node_, "hold_pose_on_idle", true);
+  // Defaults off: this is a local addition to a shared fork, so a model that
+  // does not opt in behaves exactly as upstream does.
+  hold_pose_on_idle_ = declareOrGetParameter<bool>(node_, "hold_pose_on_idle", false);
 
   if (use_stamped_twist)
   {
@@ -162,10 +164,21 @@ void BaseVelocityPlugin::pre_step(mjData* data)
     // An external teleport (reset_world, set_free_joint_state) moves the pose
     // far more in one step than contact drift ever can; yield to it by
     // re-capturing instead of restoring, so the latch never fights a reset.
+    // Orientation counts as a teleport too: a reset that only re-aims the base
+    // moves qpos[3..6] and barely moves qpos[0..2], and cmd_vel is always
+    // stale right after a reset, so a position-only test would silently
+    // revert it on the very next step.
     bool teleported = false;
     for (int k = 0; k < 3 && hold_pose_; ++k)
     {
       if (std::abs(data->qpos[qpos_adr_ + k] - held_qpos_[k]) > 0.005)
+      {
+        teleported = true;
+      }
+    }
+    for (int k = 3; k < 7 && hold_pose_; ++k)
+    {
+      if (std::abs(data->qpos[qpos_adr_ + k] - held_qpos_[k]) > 0.002)
       {
         teleported = true;
       }

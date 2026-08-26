@@ -17,11 +17,11 @@ ros2_control joint set. Applies only what MuJoCo needs:
          constraints that MJCF conversion drops
        - the head camera as a MuJoCo RGB-D camera on the optical frame
          (matched to the competition's D435 retarget: 640x360, 56 deg vfov)
-  4. Add the MuJoCo camera frame (optical frame rotated pi about X, MuJoCo
-     cameras look along -Z).
+The camera needs no frame of its own: the converter treats the named site as a
+REP-103 optical frame and applies the optical->MuJoCo rotation itself.
 
-Run inside the mujoco container after building:
-    ros2 run tiger_mujoco generate_mujoco_urdf.py -o /tmp/tiger_mujoco.urdf
+Run inside the container after building:
+    ros2 run erc_bringup generate_mujoco_urdf.py -o /tmp/erc_mujoco.urdf
 """
 
 import argparse
@@ -264,8 +264,6 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
 '''
 
 
-CAMERA_FRAME = ''
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -296,7 +294,7 @@ def main():
     urdf = urdf.replace(GZ_PLUGIN, hardware, 1)
 
     inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw)
-    urdf = urdf.replace('</robot>', CAMERA_FRAME + inputs + '</robot>', 1)
+    urdf = urdf.replace('</robot>', inputs + '</robot>', 1)
 
     with open(args.output, 'w') as f:
         f.write(urdf)

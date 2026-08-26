@@ -28,8 +28,6 @@ import numpy as np
 
 # A face counts as axis-aligned if its normal is within this of a unit axis.
 NORMAL_TOL = 1e-4
-# Face planes closer together than this are treated as one plane.
-PLANE_TOL = 1e-6
 
 
 def read_binary_stl(path):
@@ -69,11 +67,12 @@ def face_planes(normals, tris):
     return [sorted(p) for p in planes], off_axis
 
 
-def inside(tris, points):
-    """Even-odd ray cast along +Z. Points must not lie on a face plane."""
+def _cast(tris, points, axis):
+    """Even-odd ray cast along +axis. Points must not lie on a face plane."""
     v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
     e1, e2 = v1 - v0, v2 - v0
-    d = np.array([0.0, 0.0, 1.0])
+    d = np.zeros(3)
+    d[axis] = 1.0
     h = np.cross(d, e2)
     a = np.einsum('ij,ij->i', e1, h)
     usable = np.abs(a) > 1e-12
@@ -86,9 +85,30 @@ def inside(tris, points):
         q = np.cross(s, e1)
         w = f * np.einsum('j,ij->i', d, q)
         t = f * np.einsum('ij,ij->i', e2, q)
-        hit = usable & (u >= 0) & (u <= 1) & (w >= 0) & (u + w <= 1) & (t > 1e-9)
+        # Strict inequalities: a ray through the shared diagonal of a
+        # triangulated rectangular face would otherwise be counted in both
+        # triangles, flipping the parity and silently inverting that cell.
+        hit = usable & (u > 0) & (w > 0) & (u + w < 1) & (t > 1e-9)
         out[i] = bool(hit.sum() % 2)
     return out
+
+
+def inside(tris, points):
+    """Solidity at each point, cross-checked along two independent axes.
+
+    A single ray can be defeated by grazing an edge or a vertex. Two axes
+    disagreeing means the answer is not trustworthy for that point, and a
+    wrong cell here becomes wrong collision geometry that nothing downstream
+    would catch - so it is a hard error rather than a coin flip.
+    """
+    z = _cast(tris, points, 2)
+    x = _cast(tris, points, 0)
+    if not np.array_equal(z, x):
+        bad = np.flatnonzero(z != x)
+        sys.exit(f'ray casts disagree at {len(bad)} sample point(s), first at '
+                 f'{points[bad[0]]}: this mesh needs a real convex '
+                 f'decomposition, not a slab decomposition')
+    return z
 
 
 def occupancy(tris, planes):
@@ -166,6 +186,9 @@ def decompose(path, verbose=True):
         volume += 8 * half[0] * half[1] * half[2]
         out.append((centre, half))
 
+    # Volume equality alone would not catch a mis-marked pair of cells that
+    # cancel out, so verify() has already compared the box union against the
+    # occupancy grid cell by cell. This is the second, independent check.
     exact = mesh_volume(tris)
     if abs(volume - exact) > 1e-6:
         sys.exit(f'{path}: decomposed volume {volume:.6f} != mesh volume '

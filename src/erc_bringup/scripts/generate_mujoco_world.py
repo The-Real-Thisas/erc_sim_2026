@@ -51,9 +51,7 @@ SHELF_X, SHELF_Y, SHELF_Z = 3.0, 0.0, 1.1
 NUM_COLUMNS, NUM_ROWS = 5, 6
 ACTIVE_ROWS = [1, 2, 3, 4]
 COLUMN_WIDTH = 1.0
-SHELF_HEIGHT = 2.10
 COLUMN_JITTER_RANGE = COLUMN_WIDTH * 0.25
-ROTATE_90_DEGREES_RAD = 1.5708
 COLUMN_Y_OFFSETS = [((NUM_COLUMNS - 1) / 2 - c) * COLUMN_WIDTH for c in range(NUM_COLUMNS)]
 TOP_BOOK_Z = 0.825
 ROW_SPACING = 0.33
@@ -81,9 +79,10 @@ MARKER_XYAXES = '0 -1 0 0 0 1'
 
 # The collection bin's interior, in bin-local coordinates. The mesh is bevelled,
 # so mesh_collision.py refuses it and these are measured from the mesh instead:
-# interior floor top at bin-local y -0.02 (world z 0.750 once the bin rests on
-# the table), 0.31 x 0.56 clear, walls 0.10 high, and a lower lip at the open
-# front edge. Named so a contact check can tell the floor from the walls.
+# the interior floor's top face is at bin-local y -0.095, which is world z
+# 0.750 once the bin rests on the table; 0.31 x 0.56 clear, walls 0.20 tall,
+# and a lower lip at the open front edge. Sizes below are MuJoCo half-extents.
+# Named so a contact check can tell the floor from the walls.
 BIN_COLLISION = [
     ('bin_floor',      (0.0, -0.100, -0.025), (0.155, 0.005, 0.280)),
     ('bin_wall_back',  (0.0, 0.005, 0.2498),  (0.155, 0.100, 0.0052)),
@@ -92,6 +91,11 @@ BIN_COLLISION = [
     ('bin_lip_front',  (0.0, -0.055, -0.2927), (0.155, 0.040, 0.0122)),
 ]
 BIN_MASS = 4.70313898335195
+# Straight from the SDF's <inertial>: the centre of mass sits 34.9 mm off the
+# body origin, and ixy is 7% of ixx, so neither can be dropped without changing
+# how the bin rocks when a book lands in it.
+BIN_COM = '-0.000869 -0.034922 0'
+BIN_INERTIA = '0.0896407437951023 0.223231929617035 0.175200579933907 0.00627075393219412 0 0'
 # Spawned already resting on the table. erc_world.sdf drops it from z 1.3 onto
 # a table whose top is at 0.74; it settles here, and starting it settled keeps
 # the arena deterministic instead of depending on how a 4.7 kg box bounces.
@@ -120,7 +124,9 @@ def visual_mesh(name, mesh_name, rgba, indent=6):
 
 
 def build_world(share, seed=None):
-    if seed is not None:
+    # An empty ERC_SEED means 'unseeded', as it does for the Gazebo launch;
+    # int('') would otherwise abort the whole launch with a traceback.
+    if seed:
         random.seed(int(seed))
 
     models = os.path.join(share, 'models')
@@ -170,7 +176,8 @@ def build_world(share, seed=None):
         '    <light name="light_right" pos="10 0 5" dir="-1 0 -0.5" directional="true" '
         'diffuse="0.3 0.3 0.3" specular="0.05 0.05 0.05" castshadow="false"/>',
         '',
-        '    <!-- Ground plane, 10x10 centred on the arena like erc_world.sdf. -->',
+        '    <!-- Ground plane, centred on the arena like erc_world.sdf. The size',
+        '         bounds what is drawn; a MuJoCo plane is infinite for collision. -->',
         '    <geom name="arena_floor" type="plane" pos="1 0 0" size="5 5 0.05" '
         'material="arena_floor"/>',
         '    <!-- Painted arena boundary and start zone: visual only, as in the SDF. -->',
@@ -204,7 +211,8 @@ def build_world(share, seed=None):
         '    <!-- Collection bin: a free body, resting on the table. -->',
         f'    <body name="erc_collection_bin" pos="{fmt(BIN_POSE)}" quat="{PROP_QUAT}">',
         '      <freejoint name="erc_collection_bin_joint"/>',
-        f'      <inertial pos="0 0 0" mass="{BIN_MASS:g}" diaginertia="0.0896 0.2232 0.1752"/>',
+        f'      <inertial pos="{BIN_COM}" mass="{BIN_MASS:g}" '
+        f'fullinertia="{BIN_INERTIA}"/>',
         visual_mesh('erc_collection_bin', 'erc_collection_bin', (1, 0, 0, 1)),
     ]
     for name, pos, half in BIN_COLLISION:

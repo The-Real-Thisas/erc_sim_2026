@@ -93,7 +93,7 @@ private:
 
   // Idle pose latch (see pre_step): restore the free joint pose captured when
   // commands went stale, so articulation reaction torques cannot wander the base.
-  bool hold_pose_on_idle_{ true };
+  bool hold_pose_on_idle_{ false };
   bool hold_pose_{ false };
   mjtNum held_qpos_[7]{ 0, 0, 0, 1, 0, 0, 0 };
 

@@ -5,7 +5,9 @@ Relay MuJoCo's floating-base odometry onto the competition interface:
 
 Like the Gazebo MecanumDrive plugin, odom is pinned to where the robot was
 when this node started, not to the world origin: the first received pose
-defines the odom frame.
+defines the odom frame, so /odom starts at identity however the robot was
+spawned. Consumers that want world coordinates should go through TF rather
+than assuming odom and world coincide.
 """
 
 import math
@@ -38,10 +40,12 @@ class OdomRelay(Node):
         q = msg.pose.pose.orientation
         yaw = quat_to_yaw(q)
         if self.origin is None:
-            # The robot spawns at the world origin, so odom == world. Pinning
-            # at exactly (0,0,0) keeps that identity deterministic, which the
-            # experiment scripts rely on to express scene objects in odom.
-            self.origin = (0.0, 0.0, 0.0)
+            # Latch the spawn pose so /odom starts at identity, matching what
+            # the Gazebo MecanumDrive plugin reports. The competition spawns
+            # the robot yawed 90 degrees, so pinning at (0,0,0) instead would
+            # make /odom disagree with the Gazebo backend by that 90 degrees
+            # from the very first message.
+            self.origin = (p.x, p.y, yaw)
         ox, oy, oyaw = self.origin
         c, s = math.cos(-oyaw), math.sin(-oyaw)
         dx, dy = p.x - ox, p.y - oy
@@ -57,7 +61,15 @@ class OdomRelay(Node):
         out.pose.pose.position.z = 0.0
         out.pose.pose.orientation.z = math.sin(dyaw / 2.0)
         out.pose.pose.orientation.w = math.cos(dyaw / 2.0)
+        # nav_msgs/Odometry defines twist in the CHILD frame, and that is what
+        # the Gazebo plugin publishes. MuJoCo reports the free joint's raw
+        # qvel, which is world-frame, so rotate the linear part into the base
+        # frame; the yaw rate is the same in both.
         out.twist = msg.twist
+        vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
+        cy, sy = math.cos(-yaw), math.sin(-yaw)
+        out.twist.twist.linear.x = cy * vx - sy * vy
+        out.twist.twist.linear.y = sy * vx + cy * vy
         self.pub.publish(out)
 
         t = TransformStamped()

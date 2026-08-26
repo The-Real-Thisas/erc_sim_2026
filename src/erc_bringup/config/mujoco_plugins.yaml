@@ -5,6 +5,11 @@
         type: "mujoco_ros2_control_plugins/BaseVelocityPlugin"
         body: "base_footprint"
         cmd_vel_topic: "/cmd_vel"
+        # Zeroing the base velocity does not hold it still: reaction torques
+        # from an arm accelerating integrate into the free joint each step and
+        # the base wanders. This is a local addition to the vendored plugin
+        # (see README) and is off by default there, so it is opted into here.
+        hold_pose_on_idle: true
       free_joint_state_publisher:
         type: "mujoco_ros2_control_plugins/FreeJointStatePublisherPlugin"
       mujoco_camera_plugin:

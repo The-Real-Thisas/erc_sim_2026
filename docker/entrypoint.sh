@@ -29,10 +29,12 @@ ${GZ_SIM_SYSTEM_PLUGIN_PATH}"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export PYTHONDONTWRITEBYTECODE=1
 
-# Keep DDS on the loopback interface. Without this every ROS 2 process on the
-# LAN joins the discovery mesh, and the participant count alone is enough to
-# stall the simulation on a busy network.
-export ROS_LOCALHOST_ONLY=1
-export CYCLONEDDS_URI='<CycloneDDS><Domain><Discovery><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>'
+# Defaults only. Setting ROS_LOCALHOST_ONLY=1 keeps DDS off the LAN, which
+# matters on a busy network where the participant count alone can stall the
+# simulation - but it also breaks a second machine, a host-side RViz outside
+# this container's netns, and a real-robot bridge, so it stays opt-in and any
+# value the user already exported wins.
+export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-<CycloneDDS><Domain><Discovery><MaxAutoParticipantIndex>120</MaxAutoParticipantIndex></Discovery></Domain></CycloneDDS>}"
 
 exec "$@"

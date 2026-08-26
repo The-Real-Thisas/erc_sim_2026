@@ -70,14 +70,46 @@ number-marker layout.
 ros2_control sensor interfaces); contact sensors have no equivalent in
 `mujoco_ros2_control` at all and would need a new plugin.
 
-Two things differ from the SDF by design on the MuJoCo side. The collection bin
-starts already resting on the table instead of being dropped from z=1.3, so the
-arena is deterministic rather than depending on how a 4.7 kg box bounces. And
-collision geometry for the table and shelf is an exact box decomposition of the
-shipped meshes rather than the meshes themselves, because MuJoCo collides a mesh
-as its convex hull — which would make the shelf a solid slab with nowhere to put
-a book. `erc_bringup/scripts/mesh_collision.py` does that decomposition and
-verifies the boxes reproduce the mesh volume exactly before writing anything.
+### Launch arguments
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `headless` | `true` | No MuJoCo viewer window. (The Gazebo launch defaults to `false`.) |
+| `seed` | `$ERC_SEED` | Arena layout seed. Empty means unseeded. |
+| `scene` | *(generated)* | Absolute path to an MJCF scene to use instead of the arena. |
+| `camera_rate` | `30.0` | Camera publish rate, Hz. Lower it to cut render cost. |
+| `sim_speed` | `-1.0` | `-1` follows the viewer's slowdown setting. |
+| `plugins` | `mujoco_plugins.yaml` | Plugin config file in `erc_bringup/config`. |
+
+### Where MuJoCo deliberately differs from the SDF
+
+The arena geometry, poses and layout match. These do not, and all of them are
+choices rather than accidents:
+
+- **Collision geometry** for the table and shelf is an exact box decomposition
+  of the shipped meshes, not the meshes themselves — MuJoCo collides a mesh as
+  its convex hull, which would make the shelf a solid slab with nowhere to put
+  a book. `erc_bringup/scripts/mesh_collision.py` does this and verifies the
+  boxes reproduce the mesh volume exactly before writing anything.
+- **The collection bin starts resting on the table** rather than being dropped
+  from z=1.3, so the arena is deterministic instead of depending on how a
+  4.7 kg box bounces.
+- **Gravity is compensated** on every torso, head, arm and gripper link. PAL's
+  real controllers apply gravity feedforward in firmware, so the torque clamps
+  are headroom on top of gravity. A carried object is *not* compensated.
+- **Robot self-collision is off**, matching the competition Gazebo model.
+- **The gripper's four-bar is a real closed loop** (`<connect>` equality
+  constraints) instead of the URDF's `<mimic>` ratios, which URDF uses only
+  because it cannot express loops.
+- **Gripper `kp` is 300**, not PAL's 100, so the position servo can develop the
+  full 8 N force limit within the screw's travel. The force clamp is unchanged.
+- **Wheel friction is 0.05** with `priority=1`, mirroring the competition's own
+  `mu2=0` lateral-slip patch, since the base is driven kinematically.
+- **Fingertip friction is 1.2** (rubber pad on paper) and **books use
+  `condim="6"`** with torsional and rolling friction, where the SDF sets only
+  `mu`/`mu2`.
+- **The base is frozen while `/cmd_vel` is stale**, so the arm can no longer
+  push the base around.
 
 ## Robot platform
 
@@ -187,10 +219,14 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `/head_front_camera/head_front_camera/color/camera_info` | `sensor_msgs/msg/CameraInfo` | Head RGB camera info |
 | `/head_front_camera/head_front_camera/depth/image_rect_raw` | `sensor_msgs/msg/Image` | Head depth camera (float32) |
 | `/head_front_camera/head_front_camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | Head depth camera info |
-| `/head_front_camera/head_front_camera/depth/color/points` | `sensor_msgs/msg/PointCloud2` | |
+| `/head_front_camera/head_front_camera/depth/color/points` | `sensor_msgs/msg/PointCloud2` | *(Gazebo only)* |
 | `/base_imu` | `sensor_msgs/msg/Imu` | Base IMU *(Gazebo only)* |
 | `/contacts` | `ros_gz_interfaces/msg/Contacts` | Contact sensor *(Gazebo only)* |
 | `/bin_contacts` | `ros_gz_interfaces/msg/Contacts` | *(Gazebo only)* |
+| `/spectator/color` | `sensor_msgs/msg/Image` | Fixed arena view *(MuJoCo only)* |
+| `/spectator/depth` | `sensor_msgs/msg/Image` | *(MuJoCo only)* |
+| `/spectator/camera_info` | `sensor_msgs/msg/CameraInfo` | *(MuJoCo only)* |
+| `/model_states` | `mujoco_ros2_control_msgs/msg/FreeJointStateArray` | Ground-truth pose of every free body *(MuJoCo only)* |
 
 ### Sensor specifications
 
