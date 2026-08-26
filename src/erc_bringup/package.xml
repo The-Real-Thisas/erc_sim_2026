@@ -6,10 +6,25 @@
   <maintainer email="erc@dubaifuturelabs.ae">ERC Committee</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
+
   <depend>tiago_pro_description</depend>
-  <depend>ros_gz_sim</depend>
-  <depend>ros_gz_bridge</depend>
+  <depend>erc_description</depend>
   <depend>robot_state_publisher</depend>
   <depend>controller_manager</depend>
+
+  <!-- Gazebo backend -->
+  <depend>ros_gz_sim</depend>
+  <depend>ros_gz_bridge</depend>
+
+  <!-- MuJoCo backend -->
+  <exec_depend>mujoco_ros2_control</exec_depend>
+  <exec_depend>mujoco_ros2_control_plugins</exec_depend>
+  <exec_depend>omni_base_description</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>topic_tools</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
   <export><build_type>ament_cmake</build_type></export>
 </package>

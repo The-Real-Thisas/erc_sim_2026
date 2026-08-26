@@ -1,0 +1,170 @@
+"""
+Competition simulation on MuJoCo.
+
+Presents the same ROS surface as the Gazebo simulation.launch.py: the same
+controllers from the same controller_params.yaml, /cmd_vel driving the omni
+base, /joint_states from joint_state_broadcaster, the head RealSense on the
+competition topic names, and the same ERC_SEED-driven arena.
+
+Two artefacts are generated at launch rather than checked in, because both
+have to carry absolute paths and the arena also has to carry the seed:
+
+    generate_mujoco_urdf.py   competition URDF -> MuJoCo-flavoured URDF
+    generate_mujoco_world.py  erc_world.sdf    -> arena MJCF
+
+    ros2 launch erc_bringup mujoco_simulation.launch.py
+    ERC_SEED=7 ros2 launch erc_bringup mujoco_simulation.launch.py headless:=false
+"""
+
+import os
+import subprocess
+import tempfile
+
+from ament_index_python.packages import (
+    get_package_share_directory,
+    get_package_prefix,
+)
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+
+# erc_world.sdf spawns tiago_pro at the start zone, yawed 90 degrees.
+START_ZONE_XYZ = '0 0 0'
+START_ZONE_YAW = '1.5708'
+
+
+def launch_setup(context, *args, **kwargs):
+    headless = LaunchConfiguration('headless').perform(context)
+    camera_rate = LaunchConfiguration('camera_rate').perform(context)
+    sim_speed = LaunchConfiguration('sim_speed').perform(context)
+    plugins_file = LaunchConfiguration('plugins').perform(context)
+    scene_override = LaunchConfiguration('scene').perform(context)
+    seed = LaunchConfiguration('seed').perform(context)
+
+    bringup_share = get_package_share_directory('erc_bringup')
+    scripts = os.path.join(get_package_prefix('erc_bringup'), 'lib', 'erc_bringup')
+    omni_assets = os.path.join(
+        get_package_share_directory('omni_base_description'), 'mujoco', 'assets')
+
+    # ── The robot: competition URDF, retargeted at MuJoCo ──
+    urdf_out = os.path.join(tempfile.gettempdir(), 'erc_mujoco_robot.urdf')
+    subprocess.run(
+        [os.path.join(scripts, 'generate_mujoco_urdf.py'),
+         '-o', urdf_out,
+         '--headless', headless,
+         '--camera-rate', camera_rate,
+         '--sim-speed-factor', sim_speed,
+         '--spawn-xyz', START_ZONE_XYZ,
+         '--spawn-yaw', START_ZONE_YAW],
+        check=True)
+    robot_description = open(urdf_out).read()
+
+    # ── The arena ──
+    if scene_override:
+        scene_path = scene_override
+    else:
+        scene_path = os.path.join(tempfile.gettempdir(), 'erc_mujoco_world.xml')
+        cmd = [os.path.join(scripts, 'generate_mujoco_world.py'), '-o', scene_path]
+        if seed:
+            cmd += ['--seed', seed]
+        subprocess.run(cmd, check=True)
+
+    manager_cfg = os.path.join(
+        bringup_share, 'config', 'gazebo_controller_manager_cfg.yaml')
+    controller_params = os.path.join(
+        bringup_share, 'config', 'controller_params.yaml')
+    plugins_cfg = os.path.join(bringup_share, 'config', plugins_file)
+
+    rsp = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        output='both',
+        parameters=[{'robot_description': ParameterValue(robot_description,
+                                                         value_type=str),
+                     'use_sim_time': True}],
+    )
+
+    converter = Node(
+        package='mujoco_ros2_control',
+        executable='robot_description_to_mjcf.sh',
+        output='both',
+        emulate_tty=True,
+        arguments=[
+            '--publish_topic', '/mujoco_robot_description',
+            '--no-fuse',
+            '--add_free_joint',
+            '--asset_dir', omni_assets,
+            '--scene', scene_path,
+        ],
+    )
+
+    control = Node(
+        package='mujoco_ros2_control',
+        executable='ros2_control_node',
+        output='both',
+        emulate_tty=True,
+        parameters=[{'use_sim_time': True}, manager_cfg, plugins_cfg],
+        remappings=[('~/robot_description', '/robot_description')],
+    )
+
+    # The camera plugin publishes one camera_info per camera; the competition
+    # also exposes it under the depth name. Colour and depth share intrinsics.
+    depth_info_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='depth_info_relay',
+        arguments=['/head_front_camera/head_front_camera/color/camera_info',
+                   '/head_front_camera/head_front_camera/depth/camera_info'],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    odom_relay = Node(
+        package='erc_bringup',
+        executable='odom_relay.py',
+        output='both',
+        parameters=[{'use_sim_time': True}],
+    )
+
+    def spawner(name, params=None):
+        args = [name, '-c', '/controller_manager',
+                '--controller-manager-timeout', '120']
+        if params:
+            args += ['-p', params]
+        return Node(package='controller_manager', executable='spawner',
+                    arguments=args, output='both')
+
+    controllers = TimerAction(period=5.0, actions=[
+        spawner('joint_state_broadcaster'),
+        spawner('arm_left_controller', controller_params),
+        spawner('arm_right_controller', controller_params),
+        spawner('head_controller', controller_params),
+        spawner('torso_controller', controller_params),
+        spawner('gripper_left_controller_raw', controller_params),
+        spawner('gripper_right_controller_raw', controller_params),
+    ])
+
+    gripper_clamp = TimerAction(period=9.0, actions=[
+        Node(package='erc_bringup', executable='gripper_command_clamp.py',
+             parameters=[{'use_sim_time': True}], output='both'),
+    ])
+
+    return [rsp, converter, control, depth_info_relay, odom_relay,
+            controllers, gripper_clamp]
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('headless', default_value='true'),
+        DeclareLaunchArgument('camera_rate', default_value='30.0'),
+        DeclareLaunchArgument('sim_speed', default_value='-1.0',
+                              description='-1 follows the viewer slowdown setting'),
+        DeclareLaunchArgument('plugins', default_value='mujoco_plugins.yaml'),
+        DeclareLaunchArgument('scene', default_value='',
+                              description='Absolute path to an MJCF scene to use '
+                                          'instead of the generated arena'),
+        DeclareLaunchArgument('seed', default_value='',
+                              description='Arena layout seed (default: $ERC_SEED)'),
+        OpaqueFunction(function=launch_setup),
+    ])

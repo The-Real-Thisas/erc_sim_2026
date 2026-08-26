@@ -1,0 +1,27 @@
+/**:
+  ros__parameters:
+    mujoco_plugins:
+      base_velocity_plugin:
+        type: "mujoco_ros2_control_plugins/BaseVelocityPlugin"
+        body: "base_footprint"
+        cmd_vel_topic: "/cmd_vel"
+      free_joint_state_publisher:
+        type: "mujoco_ros2_control_plugins/FreeJointStatePublisherPlugin"
+      mujoco_camera_plugin:
+        camera_publish_rate: 30.0
+        head_front_camera:
+          frame_name: "head_front_camera_color_optical_frame"
+          info_topic: "/head_front_camera/head_front_camera/color/camera_info"
+          image_topic: "/head_front_camera/head_front_camera/color/image_raw"
+          depth_topic: "/head_front_camera/head_front_camera/depth/image_rect_raw"
+        spectator:
+          frame_name: "spectator_frame"
+          info_topic: "/spectator/camera_info"
+          image_topic: "/spectator/color"
+          depth_topic: "/spectator/depth"
+    # No body_names filter: publish every free-joint body, which in the arena
+    # is all 20 books plus the collection bin. Naming a body that the scene
+    # does not contain fails plugin init and takes the whole hardware
+    # interface down with it.
+    topic: "/model_states"
+    publish_rate: 25.0
