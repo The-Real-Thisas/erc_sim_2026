@@ -2,9 +2,10 @@
 """
 Generate the competition arena as a MuJoCo scene (MJCF).
 
-This is the MuJoCo counterpart of erc_world.sdf: the same floor, walls, start
-zone, table, shelf, collection bin, books and number markers, at the same
-poses, with the same ERC_SEED-driven layout. The MJCF converter inlines this
+This file IS the arena definition: floor, walls, start zone, table, shelf,
+collection bin, books and number markers. Poses, sizes, masses and frictions
+below are the competition's own, carried over from the erc_world.sdf and model
+SDFs the arena was previously described by. The MJCF converter inlines this
 file's children into the robot model, so the robot and the arena end up in one
 MuJoCo model.
 
@@ -14,7 +15,7 @@ Two things force this to be generated rather than checked in:
     contents into an MJCF written somewhere else, so relative paths would
     resolve against the wrong directory), and
   * the book colour layout and the number-marker order are drawn from ERC_SEED
-    at launch, exactly as simulation.launch.py draws them for Gazebo.
+    at launch.
 
 Collision geometry is not the visual mesh: MuJoCo collides a mesh as its convex
 hull, which would make the shelf a solid slab with nowhere to put a book and
@@ -37,8 +38,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mesh_collision import decompose  # noqa: E402
 
 # ── Arena layout ────────────────────────────────────────────────────────────
-# Mirrors erc_world.sdf and simulation.launch.py. Keep the two in step: a book
-# that spawns in a different column here than in Gazebo is a silent divergence.
 
 BOOK_COLOURS = {
     'red':    (1.0, 0.0, 0.0, 1.0),
@@ -59,12 +58,12 @@ ROW_FLOOR_Z_OFFSETS = [TOP_BOOK_Z - (i * ROW_SPACING) for i in range(NUM_ROWS)]
 NUMBER_MARKER_PLATE_X = SHELF_X - 0.245
 NUMBER_MARKER_PLATE_Z = 2.26
 
-BOOK_HALF = (0.125, 0.015, 0.08)     # the SDF's 0.25 x 0.03 x 0.16 box
+BOOK_HALF = (0.125, 0.015, 0.08)     # the competition's 0.25 x 0.03 x 0.16 box
 BOOK_MASS = 0.3
-BOOK_FRICTION = '5.0 0.01 0.002'     # sliding mu 5.0 is the SDF's own value
-MARKER_HALF = (0.15, 0.15, 0.01)     # the SDF's 0.3 x 0.3 plate face
+BOOK_FRICTION = '5.0 0.01 0.002'     # sliding mu 5.0 is the competition's value
+MARKER_HALF = (0.15, 0.15, 0.01)     # the competition's 0.3 x 0.3 plate face
 
-# Every arena prop is placed with the same SDF pose rpy "1.5708 0 -1.5708",
+# Every arena prop is placed with the same pose rpy "1.5708 0 -1.5708",
 # which is this quaternion. Under it mesh +X is world -Y, mesh +Y is world +Z
 # and mesh +Z is world -X.
 PROP_QUAT = '0.5 0.5 -0.5 -0.5'
@@ -91,12 +90,12 @@ BIN_COLLISION = [
     ('bin_lip_front',  (0.0, -0.055, -0.2927), (0.155, 0.040, 0.0122)),
 ]
 BIN_MASS = 4.70313898335195
-# Straight from the SDF's <inertial>: the centre of mass sits 34.9 mm off the
+# Straight from the competition's <inertial>: the centre of mass sits 34.9 mm off the
 # body origin, and ixy is 7% of ixx, so neither can be dropped without changing
 # how the bin rocks when a book lands in it.
 BIN_COM = '-0.000869 -0.034922 0'
 BIN_INERTIA = '0.0896407437951023 0.223231929617035 0.175200579933907 0.00627075393219412 0 0'
-# Spawned already resting on the table. erc_world.sdf drops it from z 1.3 onto
+# Spawned already resting on the table. The arena spec drops it from z 1.3 onto
 # a table whose top is at 0.74; it settles here, and starting it settled keeps
 # the arena deterministic instead of depending on how a 4.7 kg box bounces.
 BIN_POSE = (-1.0, 0.0, 0.845)
@@ -124,8 +123,8 @@ def visual_mesh(name, mesh_name, rgba, indent=6):
 
 
 def build_world(share, seed=None):
-    # An empty ERC_SEED means 'unseeded', as it does for the Gazebo launch;
-    # int('') would otherwise abort the whole launch with a traceback.
+    # An empty ERC_SEED means 'unseeded'; int('') would otherwise abort the
+    # whole launch with a traceback.
     if seed:
         random.seed(int(seed))
 
@@ -164,7 +163,7 @@ def build_world(share, seed=None):
 
     # ── Static arena shell ──
     body = [
-        '    <!-- The SDF\'s four directional lights. All four are needed, not just',
+        '    <!-- The arena\'s four directional lights. All four are needed, not just',
         '         an overhead one: a light pointing straight down leaves every',
         '         vertical face unlit, which renders the number markers black. -->',
         '    <light name="light_front" pos="0 -10 5" dir="0 1 -0.5" directional="true" '
@@ -176,11 +175,11 @@ def build_world(share, seed=None):
         '    <light name="light_right" pos="10 0 5" dir="-1 0 -0.5" directional="true" '
         'diffuse="0.3 0.3 0.3" specular="0.05 0.05 0.05" castshadow="false"/>',
         '',
-        '    <!-- Ground plane, centred on the arena like erc_world.sdf. The size',
+        '    <!-- Ground plane, centred on the arena. The size',
         '         bounds what is drawn; a MuJoCo plane is infinite for collision. -->',
         '    <geom name="arena_floor" type="plane" pos="1 0 0" size="5 5 0.05" '
         'material="arena_floor"/>',
-        '    <!-- Painted arena boundary and start zone: visual only, as in the SDF. -->',
+        '    <!-- Painted arena boundary and start zone: visual only. -->',
         '    <geom name="arena_boundary" class="arena_visual" type="box" pos="1 0 0.001" '
         'size="3.5 3.5 0.001" rgba="0.75 0.75 0.72 1"/>',
         '    <geom name="start_zone" class="arena_visual" type="box" pos="0 0 0.002" '
@@ -221,8 +220,9 @@ def build_world(share, seed=None):
     body.append('    </body>')
     body.append('')
 
-    # ── Books: same draw order as simulation.launch.py, so a given ERC_SEED
-    #    produces the same layout on both backends. ──
+    # ── Books: the draw order is part of the arena spec - five columns, each
+    #    shuffling its four colours then jittering each book's y - so a given
+    #    ERC_SEED always reproduces the same layout. ──
     body.append('    <!-- Books: one per active shelf row, colours drawn from ERC_SEED. -->')
     for col in range(NUM_COLUMNS):
         colours_this_column = list(BOOK_COLOURS.keys())
@@ -262,8 +262,7 @@ def build_world(share, seed=None):
                 'xyaxes="1 0 0 0 0.3714 0.9284" resolution="960 540"/>')
 
     return f'''<mujoco model="erc_arena">
-  <!-- GENERATED by erc_bringup/scripts/generate_mujoco_world.py - do not edit.
-       The MuJoCo counterpart of erc_description/worlds/erc_world.sdf. -->
+  <!-- GENERATED by erc_bringup/scripts/generate_mujoco_world.py - do not edit. -->
 
   <!-- Sized for the working volume around the robot, not the whole 10 m arena:
        the camera near plane is a fraction of this extent, so a large extent
@@ -283,9 +282,9 @@ def build_world(share, seed=None):
        Merges with the robot's own <visual>, which sets the near/far planes. -->
   <visual>
     <global offwidth="960" offheight="540"/>
-    <!-- The SDF's ambient 0.7 cannot be copied across literally: Gazebo and
-         MuJoCo sum ambient and diffuse differently, and four directional
-         lights at the SDF's 0.5 plus that ambient saturate every upward face
+    <!-- The arena's nominal ambient of 0.7 cannot be copied across literally:
+         MuJoCo sums ambient and diffuse differently, and four directional
+         lights at the nominal 0.5 plus that ambient saturate every upward face
          to pure white. Scaled so a lit floor lands near 0.8, not past 1.0. -->
     <headlight ambient="0.25 0.25 0.25" diffuse="0.05 0.05 0.05" specular="0 0 0"/>
   </visual>

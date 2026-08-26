@@ -67,12 +67,25 @@ def face_planes(normals, tris):
     return [sorted(p) for p in planes], off_axis
 
 
-def _cast(tris, points, axis):
-    """Even-odd ray cast along +axis. Points must not lie on a face plane."""
+# Three deliberately skew directions. An axis-aligned ray can lie exactly in a
+# face plane or along the diagonal that splits a rectangular face into two
+# triangles, and then no edge rule is right: an inclusive test counts the hit
+# twice and a strict one counts it zero times. These directions are parallel to
+# no face and to no diagonal of an axis-aligned box, so the ordinary inclusive
+# test is safe.
+RAY_DIRECTIONS = (
+    (1.0, 0.31782, 0.12793),
+    (0.24113, 1.0, 0.36713),
+    (0.17331, 0.29173, 1.0),
+)
+
+
+def _cast(tris, points, direction):
+    """Even-odd ray cast along `direction`."""
     v0, v1, v2 = tris[:, 0], tris[:, 1], tris[:, 2]
     e1, e2 = v1 - v0, v2 - v0
-    d = np.zeros(3)
-    d[axis] = 1.0
+    d = np.asarray(direction, dtype=float)
+    d = d / np.linalg.norm(d)
     h = np.cross(d, e2)
     a = np.einsum('ij,ij->i', e1, h)
     usable = np.abs(a) > 1e-12
@@ -85,30 +98,28 @@ def _cast(tris, points, axis):
         q = np.cross(s, e1)
         w = f * np.einsum('j,ij->i', d, q)
         t = f * np.einsum('ij,ij->i', e2, q)
-        # Strict inequalities: a ray through the shared diagonal of a
-        # triangulated rectangular face would otherwise be counted in both
-        # triangles, flipping the parity and silently inverting that cell.
-        hit = usable & (u > 0) & (w > 0) & (u + w < 1) & (t > 1e-9)
+        hit = usable & (u >= 0) & (w >= 0) & (u + w <= 1) & (t > 1e-9)
         out[i] = bool(hit.sum() % 2)
     return out
 
 
 def inside(tris, points):
-    """Solidity at each point, cross-checked along two independent axes.
+    """Solidity at each point, cross-checked along three skew directions.
 
-    A single ray can be defeated by grazing an edge or a vertex. Two axes
-    disagreeing means the answer is not trustworthy for that point, and a
-    wrong cell here becomes wrong collision geometry that nothing downstream
-    would catch - so it is a hard error rather than a coin flip.
+    A single ray can be defeated by grazing an edge or a vertex. Checking each
+    point three independent ways makes a wrong cell need three coincident
+    failures rather than one, and any disagreement is a hard error: a wrong
+    cell here becomes wrong collision geometry, and the volume check below
+    cannot catch it if a second cell happens to be wrong the other way.
     """
-    z = _cast(tris, points, 2)
-    x = _cast(tris, points, 0)
-    if not np.array_equal(z, x):
-        bad = np.flatnonzero(z != x)
-        sys.exit(f'ray casts disagree at {len(bad)} sample point(s), first at '
-                 f'{points[bad[0]]}: this mesh needs a real convex '
-                 f'decomposition, not a slab decomposition')
-    return z
+    casts = [_cast(tris, points, d) for d in RAY_DIRECTIONS]
+    for n, other in enumerate(casts[1:], start=1):
+        if not np.array_equal(casts[0], other):
+            bad = np.flatnonzero(casts[0] != other)
+            sys.exit(f'ray casts 0 and {n} disagree at {len(bad)} sample '
+                     f'point(s), first at {points[bad[0]]}: this mesh needs a '
+                     f'real convex decomposition, not a slab decomposition')
+    return casts[0]
 
 
 def occupancy(tris, planes):
@@ -186,13 +197,24 @@ def decompose(path, verbose=True):
         volume += 8 * half[0] * half[1] * half[2]
         out.append((centre, half))
 
-    # Volume equality alone would not catch a mis-marked pair of cells that
-    # cancel out, so verify() has already compared the box union against the
-    # occupancy grid cell by cell. This is the second, independent check.
+    # Three independent checks, because no single one is sufficient:
+    # verify() above compared the box union against the occupancy grid cell by
+    # cell (catches a bad merge); inside() required three ray casts to agree
+    # per cell (catches a bad grid); and volume plus bounding box catch a grid
+    # that is wrong in aggregate. Volume alone would miss two cells wrong in
+    # opposite directions, which is why it is not the only check.
     exact = mesh_volume(tris)
     if abs(volume - exact) > 1e-6:
         sys.exit(f'{path}: decomposed volume {volume:.6f} != mesh volume '
                  f'{exact:.6f}; the mesh is not a union of slabs')
+    mesh_lo = tris.reshape(-1, 3).min(axis=0)
+    mesh_hi = tris.reshape(-1, 3).max(axis=0)
+    box_lo = np.array([[c[k] - h[k] for k in range(3)] for c, h in out]).min(axis=0)
+    box_hi = np.array([[c[k] + h[k] for k in range(3)] for c, h in out]).max(axis=0)
+    if not (np.allclose(mesh_lo, box_lo, atol=1e-6)
+            and np.allclose(mesh_hi, box_hi, atol=1e-6)):
+        sys.exit(f'{path}: box bounds {box_lo}..{box_hi} do not match mesh '
+                 f'bounds {mesh_lo}..{mesh_hi}')
     if verbose:
         print(f'{path}: {len(tris)} triangles -> {len(out)} boxes, '
               f'volume {volume:.6f} m^3 (exact)', file=sys.stderr)

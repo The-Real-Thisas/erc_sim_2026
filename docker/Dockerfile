@@ -8,21 +8,11 @@ RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' /etc/apt/s
 # 1. Tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-vcstool python3-colcon-common-extensions python3-rosdep \
-    python3-pip python3-venv git wget curl lsb-release gnupg2 \
+    python3-pip python3-venv git wget curl lsb-release gnupg2 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Gazebo Harmonic
-RUN wget https://packages.osrfoundation.org/gazebo.gpg \
-        -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
-        http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/gazebo-stable.list \
-    && apt-get update && apt-get install -y --no-install-recommends gz-harmonic \
-    && rm -rf /var/lib/apt/lists/*
-
-# 3. ROS 2 packages
+# 2. ROS 2 packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-ros-gzharmonic \
     ros-humble-moveit \
     ros-humble-ros2-control \
     ros-humble-ros2-controllers \
@@ -36,7 +26,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-rmw-cyclonedds-cpp \
     ros-humble-controller-manager \
     ros-humble-joint-trajectory-controller \
-    ros-humble-diff-drive-controller \
     ros-humble-position-controllers \
     ros-humble-velocity-controllers \
     ros-humble-effort-controllers \
@@ -44,11 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-topic-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. MuJoCo backend
+# 3. MuJoCo backend
 # mujoco_ros2_control is vendored in src/, so this installs only what building
 # it needs: the MuJoCo library itself, the CMake package both its CMakeLists
 # require, the GL headers its camera plugin links against, and the Python the
-# URDF-to-MJCF converter imports. ros2_control_cmake is normally pulled in by
+# URDF-to-MJCF converter imports. ros2_control_cmake would normally arrive with
 # the binary mujoco_ros2_control_plugins, which is deliberately not installed
 # here - without it both packages fail at find_package().
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -73,12 +62,11 @@ RUN python3 -m venv --system-site-packages /root/.ros/ros2_control/.venv \
         -r /tmp/mjcf-requirements.txt pycollada \
     && rm /tmp/mjcf-requirements.txt
 
-# 5. Workspace directory (source is mounted from host at runtime)
-ENV GZ_VERSION=harmonic
+# 4. Workspace directory (source is mounted from host at runtime)
 ENV PYTHONDONTWRITEBYTECODE=1
 RUN mkdir -p /opt/erc_ws/src
 
-# 6. Entrypoint
+# 5. Entrypoint
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

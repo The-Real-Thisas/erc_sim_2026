@@ -3,11 +3,11 @@
 Relay MuJoCo's floating-base odometry onto the competition interface:
 /simulator/floating_base_state (world frame) -> /odom + TF odom->base_footprint.
 
-Like the Gazebo MecanumDrive plugin, odom is pinned to where the robot was
-when this node started, not to the world origin: the first received pose
-defines the odom frame, so /odom starts at identity however the robot was
-spawned. Consumers that want world coordinates should go through TF rather
-than assuming odom and world coincide.
+odom is pinned to where the robot was when this node started, not to the world
+origin: the first received pose defines the odom frame, so /odom starts at
+identity however the robot was spawned, which is what wheel odometry on the
+real robot reports. Consumers that want world coordinates should go through TF
+rather than assuming odom and world coincide.
 """
 
 import math
@@ -40,11 +40,10 @@ class OdomRelay(Node):
         q = msg.pose.pose.orientation
         yaw = quat_to_yaw(q)
         if self.origin is None:
-            # Latch the spawn pose so /odom starts at identity, matching what
-            # the Gazebo MecanumDrive plugin reports. The competition spawns
-            # the robot yawed 90 degrees, so pinning at (0,0,0) instead would
-            # make /odom disagree with the Gazebo backend by that 90 degrees
-            # from the very first message.
+            # Latch the spawn pose so /odom starts at identity, as wheel
+            # odometry does. The robot spawns yawed 90 degrees, so pinning at
+            # (0,0,0) instead would put that 90 degrees into /odom from the
+            # very first message.
             self.origin = (p.x, p.y, yaw)
         ox, oy, oyaw = self.origin
         c, s = math.cos(-oyaw), math.sin(-oyaw)
@@ -61,10 +60,9 @@ class OdomRelay(Node):
         out.pose.pose.position.z = 0.0
         out.pose.pose.orientation.z = math.sin(dyaw / 2.0)
         out.pose.pose.orientation.w = math.cos(dyaw / 2.0)
-        # nav_msgs/Odometry defines twist in the CHILD frame, and that is what
-        # the Gazebo plugin publishes. MuJoCo reports the free joint's raw
-        # qvel, which is world-frame, so rotate the linear part into the base
-        # frame; the yaw rate is the same in both.
+        # nav_msgs/Odometry defines twist in the CHILD frame. MuJoCo reports
+        # the free joint's raw qvel, which is world-frame, so rotate the linear
+        # part into the base frame; the yaw rate is the same in both.
         out.twist = msg.twist
         vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
         cy, sy = math.cos(-yaw), math.sin(-yaw)

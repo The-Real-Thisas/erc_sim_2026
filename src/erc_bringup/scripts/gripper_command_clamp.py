@@ -2,7 +2,7 @@
 """
 Clamps incoming gripper JointTrajectory commands to a safe position range
 before they reach the JointTrajectoryController, preventing commands past
-the physical/URDF limit from ever reaching Gazebo.
+the physical/URDF limit from ever reaching the simulator.
 
 Public topics  (subscribed, unchanged for teams):
     /gripper_left_controller/joint_trajectory

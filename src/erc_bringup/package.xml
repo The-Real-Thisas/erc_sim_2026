@@ -12,11 +12,7 @@
   <depend>robot_state_publisher</depend>
   <depend>controller_manager</depend>
 
-  <!-- Gazebo backend -->
-  <depend>ros_gz_sim</depend>
-  <depend>ros_gz_bridge</depend>
-
-  <!-- MuJoCo backend -->
+  <!-- Simulation -->
   <exec_depend>mujoco_ros2_control</exec_depend>
   <exec_depend>mujoco_ros2_control_plugins</exec_depend>
   <exec_depend>omni_base_description</exec_depend>
@@ -25,6 +21,8 @@
   <exec_depend>topic_tools</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>sensors</exec_depend>
+  <exec_depend>xacro</exec_depend>
 
   <export><build_type>ament_cmake</build_type></export>
 </package>

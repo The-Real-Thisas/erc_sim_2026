@@ -7,8 +7,9 @@ tiago_pro.urdf) so the robot the dev simulator runs is byte-derived from the
 one the competition ships: same links, masses, joint limits, meshes and
 ros2_control joint set. Applies only what MuJoCo needs:
 
-  1. Strip every <gazebo> element (plugins, sensors, friction tags).
-  2. Swap the gz_ros2_control hardware plugin for
+  1. Strip every <gazebo> element PAL's xacro emits (plugins, sensors,
+     friction tags) - MuJoCo reads none of them.
+  2. Swap the hardware plugin PAL's xacro emits for
      mujoco_ros2_control/MujocoSystemInterface reading the MJCF from a topic.
   3. Embed a <mujoco_inputs> block for the URDF->MJCF converter:
        - one MuJoCo <position> actuator per commanded joint, gains taken from
@@ -25,6 +26,7 @@ Run inside the container after building:
 """
 
 import argparse
+import math
 import re
 import sys
 
@@ -73,7 +75,16 @@ PAL_GAINS = {
 # (pal_sea_arm_description/robots/pal_sea_arm.urdf.xacro).
 FOUR_BAR_ANCHOR = {'left': '0.014 -0.001 0', 'right': '0.014 -0.0015 0'}
 
-GZ_PLUGIN = '<plugin>gz_ros2_control/GazeboSimSystem</plugin>'
+# PAL's xacro emits one of several simulator hardware plugins depending on its
+# own arguments, so match whichever one landed rather than a fixed name.
+HARDWARE_PLUGIN_RE = re.compile(r'<plugin>[^<]*(?:GazeboSystem|GazeboSimSystem|'
+                                r'MujocoSystem\w*)</plugin>')
+
+# The head camera, matched to an Intel RealSense D435 depth mode: a native 16:9
+# depth resolution at the datasheet's 87 deg horizontal field of view. MuJoCo
+# specifies a camera by its VERTICAL fov, which follows from these.
+CAM_W, CAM_H = 640, 360
+CAM_HFOV_RAD = 1.5184364492350666        # 87 deg
 
 
 def strip_gazebo_blocks(urdf: str) -> str:
@@ -86,9 +97,10 @@ def strip_gazebo_blocks(urdf: str) -> str:
 
 
 def strip_transmissions(urdf: str) -> str:
-    # gz_ros2_control never implements <transmission> (all reductions are 1.0
-    # anyway), but mujoco_ros2_control demands a matching MuJoCo actuator per
-    # transmission actuator. Stripping them reproduces the Gazebo behaviour.
+    # Every reduction in this robot is 1.0, so the transmissions carry no
+    # information - but mujoco_ros2_control demands a matching MuJoCo actuator
+    # per transmission actuator, so leaving them in would require inventing
+    # actuators that do nothing.
     n = urdf.count('<transmission')
     urdf = re.sub(r'[ \t]*<transmission( [^>]*)?>.*?</transmission>\n?', '',
                   urdf, flags=re.S)
@@ -129,7 +141,14 @@ def root_link(urdf: str) -> str:
     return roots.pop()
 
 
-def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
+def head_camera_fovy() -> float:
+    """Vertical FOV in degrees, from the horizontal FOV and the aspect ratio."""
+    return math.degrees(
+        2 * math.atan(math.tan(CAM_HFOV_RAD / 2) * CAM_H / CAM_W))
+
+
+def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
+                        fovy: float) -> str:
     lims = joint_limits(urdf)
     root_body = root_link(urdf)
     actuators = []
@@ -218,8 +237,7 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
         <default class="collision">
           <!-- contype 1 / conaffinity 2 disables robot self-collision while
                keeping robot-vs-world contact (world geoms are 1/1): the
-               competition Gazebo model runs with self-collision off, and with
-               it on the arms' zero pose presses into the chassis and gets
+               arms' zero pose otherwise presses into the chassis and gets
                pushed out to a dangling pose that fouls the table. -->
           <geom group="3" type="mesh" contype="1" conaffinity="2"/>
         </default>
@@ -238,7 +256,7 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
       <!-- The converter treats the site as a REP-103 optical frame and applies
            the optical->MuJoCo rotation itself. -->
       <camera site="head_front_camera_color_optical_frame" name="head_front_camera"
-              fovy="56" mode="fixed" resolution="640 360"/>
+              fovy="{fovy:.6g}" mode="fixed" resolution="{CAM_W} {CAM_H}"/>
       <!-- The base is driven kinematically (BaseVelocityPlugin writes the
            freejoint's planar qvel), so wheel-ground friction only fights
            strafe/rotation. Near-zero friction mirrors the competition's own
@@ -256,8 +274,8 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str) -> str:
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; erc_world.sdf spawns
            tiago_pro yawed 90 degrees at the start zone. Do NOT lift it off the
-           floor the way the Gazebo spawn does: the base plugin latches the pose
-           whenever cmd_vel is stale, so a robot spawned in the air stays there. -->
+           floor: the base plugin latches the pose whenever cmd_vel is stale,
+           so a robot spawned in the air would simply stay there. -->
       <modify_element type="body" name="{root_body}" pos="{spawn_xyz}" euler="0 0 {spawn_yaw}"/>
     </processed_inputs>
   </mujoco_inputs>
@@ -281,6 +299,8 @@ def main():
     src = get_package_share_directory('erc_description') + '/urdf/tiago_pro.urdf'
     urdf = open(src).read()
 
+    fovy = head_camera_fovy()
+
     urdf = strip_gazebo_blocks(urdf)
     urdf = strip_transmissions(urdf)
 
@@ -289,11 +309,12 @@ def main():
       <param name="headless">{args.headless}</param>
       <param name="camera_publish_rate">{args.camera_rate}</param>
       <param name="sim_speed_factor">{args.sim_speed_factor}</param>'''
-    if GZ_PLUGIN not in urdf:
-        sys.exit('ERROR: gz_ros2_control plugin block not found')
-    urdf = urdf.replace(GZ_PLUGIN, hardware, 1)
+    if not HARDWARE_PLUGIN_RE.search(urdf):
+        sys.exit('ERROR: no simulator hardware plugin found in <ros2_control>, '
+                 'so there is nothing to swap for the MuJoCo one')
+    urdf = HARDWARE_PLUGIN_RE.sub(lambda _m: hardware, urdf, count=1)
 
-    inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw)
+    inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw, fovy)
     urdf = urdf.replace('</robot>', inputs + '</robot>', 1)
 
     with open(args.output, 'w') as f:

@@ -1,16 +1,16 @@
 """
-Competition simulation on MuJoCo.
+Competition simulation.
 
-Presents the same ROS surface as the Gazebo simulation.launch.py: the same
-controllers from the same controller_params.yaml, /cmd_vel driving the omni
-base, /joint_states from joint_state_broadcaster, the head RealSense on the
-competition topic names, and the same ERC_SEED-driven arena.
+Brings up the arena and the robot on MuJoCo: the controllers from
+controller_params.yaml, /cmd_vel driving the omni base, /joint_states from
+joint_state_broadcaster, the head RealSense on the competition topic names,
+and the ERC_SEED-driven arena layout.
 
 Two artefacts are generated at launch rather than checked in, because both
 have to carry absolute paths and the arena also has to carry the seed:
 
     generate_mujoco_urdf.py   competition URDF -> MuJoCo-flavoured URDF
-    generate_mujoco_world.py  erc_world.sdf    -> arena MJCF
+    generate_mujoco_world.py  arena spec       -> arena MJCF
 
     ros2 launch erc_bringup mujoco_simulation.launch.py
     ERC_SEED=7 ros2 launch erc_bringup mujoco_simulation.launch.py headless:=false
@@ -25,7 +25,10 @@ from ament_index_python.packages import (
     get_package_prefix,
 )
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
+                            OpaqueFunction, TimerAction)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -55,16 +58,24 @@ def launch_setup(context, *args, **kwargs):
 
     # ── The robot: competition URDF, retargeted at MuJoCo ──
     urdf_out = os.path.join(workdir, 'robot.urdf')
-    subprocess.run(
-        [os.path.join(scripts, 'generate_mujoco_urdf.py'),
-         '-o', urdf_out,
-         '--headless', headless,
-         '--camera-rate', camera_rate,
-         '--sim-speed-factor', sim_speed,
-         '--spawn-xyz', START_ZONE_XYZ,
-         '--spawn-yaw', START_ZONE_YAW],
-        check=True)
-    robot_description = open(urdf_out).read()
+    try:
+        subprocess.run(
+            [os.path.join(scripts, 'generate_mujoco_urdf.py'),
+             '-o', urdf_out,
+             '--headless', headless,
+             '--camera-rate', camera_rate,
+             '--sim-speed-factor', sim_speed,
+             '--spawn-xyz', START_ZONE_XYZ,
+             '--spawn-yaw', START_ZONE_YAW],
+            check=True)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            'Could not build the MuJoCo robot description. It is derived from '
+            'the competition URDF at erc_description/urdf/tiago_pro.urdf; if '
+            'that file is missing, generate it first with:\n'
+            '    ros2 run erc_bringup generate_urdf.py') from exc
+    with open(urdf_out) as fh:
+        robot_description = fh.read()
 
     # ── The arena ──
     if scene_override:
@@ -81,7 +92,7 @@ def launch_setup(context, *args, **kwargs):
         subprocess.run(cmd, check=True)
 
     manager_cfg = os.path.join(
-        bringup_share, 'config', 'gazebo_controller_manager_cfg.yaml')
+        bringup_share, 'config', 'controller_manager_cfg.yaml')
     controller_params = os.path.join(
         bringup_share, 'config', 'controller_params.yaml')
     plugins_cfg = os.path.join(bringup_share, 'config', plugins_file)
@@ -167,8 +178,25 @@ def launch_setup(context, *args, **kwargs):
              parameters=[{'use_sim_time': True}], output='both'),
     ])
 
+    # The camera plugin publishes depth but no point cloud, exactly as the gz
+    # rgbd_camera did. The `sensors` package rebuilds it with a RealSense-D435
+    # noise model; its topic defaults already match the names below, and it is
+    # engine-agnostic. Delayed so there is exactly one publisher on the topic.
+    depth_cloud = []
+    try:
+        sensors_launch = os.path.join(
+            get_package_share_directory('sensors'), 'launch', 'depth_to_cloud.launch.py')
+        depth_cloud.append(TimerAction(period=12.0, actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(sensors_launch),
+                condition=IfCondition(LaunchConfiguration('depth_cloud')))]))
+    except Exception as exc:
+        print(f'[mujoco_simulation] depth cloud NOT started - the `sensors` '
+              f'package is unavailable ({exc}). Build it with: '
+              f'colcon build --packages-select sensors --symlink-install')
+
     return [rsp, converter, control, depth_info_relay, odom_relay,
-            controllers, gripper_clamp]
+            controllers, gripper_clamp, *depth_cloud]
 
 
 def generate_launch_description():
@@ -183,5 +211,8 @@ def generate_launch_description():
                                           'instead of the generated arena'),
         DeclareLaunchArgument('seed', default_value='',
                               description='Arena layout seed (default: $ERC_SEED)'),
+        DeclareLaunchArgument('depth_cloud', default_value='true',
+                              description='Rebuild the head depth point cloud '
+                                          'via sensors/depth_to_cloud'),
         OpaqueFunction(function=launch_setup),
     ])

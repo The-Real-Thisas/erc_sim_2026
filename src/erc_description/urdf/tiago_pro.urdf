@@ -490,7 +490,7 @@
                 equivalent to inverse of viscous damping coefficient with units of m/s/N.
                 A slip value of 0 is infinitely viscous. -->
             <mu>0.80</mu>
-            <mu2>0.0</mu2>
+            <mu2>0.30</mu2>
             <fdir1 gz:expressed_in="base_footprint">1 1 0</fdir1>
           </ode>
         </friction>
@@ -593,7 +593,7 @@
                 equivalent to inverse of viscous damping coefficient with units of m/s/N.
                 A slip value of 0 is infinitely viscous. -->
             <mu>0.80</mu>
-            <mu2>0.0</mu2>
+            <mu2>0.30</mu2>
             <fdir1 gz:expressed_in="base_footprint">1 -1 0</fdir1>
           </ode>
         </friction>
@@ -696,7 +696,7 @@
                 equivalent to inverse of viscous damping coefficient with units of m/s/N.
                 A slip value of 0 is infinitely viscous. -->
             <mu>0.80</mu>
-            <mu2>0.0</mu2>
+            <mu2>0.30</mu2>
             <fdir1 gz:expressed_in="base_footprint">1 -1 0</fdir1>
           </ode>
         </friction>
@@ -799,7 +799,7 @@
                 equivalent to inverse of viscous damping coefficient with units of m/s/N.
                 A slip value of 0 is infinitely viscous. -->
             <mu>0.80</mu>
-            <mu2>0.0</mu2>
+            <mu2>0.30</mu2>
             <fdir1 gz:expressed_in="base_footprint">1 1 0</fdir1>
           </ode>
         </friction>
@@ -1194,38 +1194,38 @@
   <gazebo reference="head_front_camera_link">
     <sensor name="head_front_camera" type="camera">
       <topic>head_front_camera/color</topic>
-      <gz_frame_id>head_front_camera_color_optical_frame</gz_frame_id>
+      <gz_frame_id>head_front_camera_color_frame</gz_frame_id>
       <always_on>true</always_on>
       <update_rate>30</update_rate>
       <visualize>true</visualize>
       <camera name="head_front_camera">
-        <horizontal_fov>1.5184364492350666</horizontal_fov>
-        <vertical_fov>0.9773843811168246</vertical_fov>
+        <horizontal_fov>1.4870205226991688</horizontal_fov>
+        <vertical_fov>1.0122909661567112</vertical_fov>
         <image>
-          <format>R8G8B8</format>
+          <format>B8G8R8</format>
           <width>640</width>
-          <height>360</height>
+          <height>480</height>
         </image>
       </camera>
     </sensor>
     <sensor name="head_front_camera_frame_depth_sensor" type="rgbd_camera">
       <always_on>1</always_on>
-      <gz_frame_id>head_front_camera_depth_optical_frame</gz_frame_id>
+      <gz_frame_id>head_front_camera_depth_frame</gz_frame_id>
       <update_rate>30.0</update_rate>
       <visualize>1</visualize>
       <topic>head_front_camera/depth</topic>
       <camera name="rgbd_camera_frame">
-        <horizontal_fov>1.5184364492350666</horizontal_fov>
-        <vertical_fov>0.9773843811168246</vertical_fov>
+        <horizontal_fov>1.4870205226991688</horizontal_fov>
+        <vertical_fov>1.0122909661567112</vertical_fov>
         <image>
           <width>640</width>
-          <height>360</height>
-          <format>R8G8B8</format>
+          <height>480</height>
+          <format>B8G8R8</format>
         </image>
         <depth_camera>
           <clip>
-            <near>0.2</near>
-            <far>8.0</far>
+            <near>0.3</near>
+            <far>3.0</far>
           </clip>
         </depth_camera>
       </camera>
@@ -2684,27 +2684,7 @@
     <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
       <robot_param>robot_description</robot_param>
       <robot_param_node>robot_state_publisher</robot_param_node>
-      <parameters>/opt/erc_ws/install/erc_bringup/share/erc_bringup/config/gazebo_controller_manager_cfg.yaml</parameters>
-    </plugin>
-    <plugin filename="gz-sim-mecanum-drive-system"
-            name="gz::sim::systems::MecanumDrive">
-      <front_left_joint>wheel_front_left_joint</front_left_joint>
-      <front_right_joint>wheel_front_right_joint</front_right_joint>
-      <back_left_joint>wheel_rear_left_joint</back_left_joint>
-      <back_right_joint>wheel_rear_right_joint</back_right_joint>
-      <wheel_separation>0.44715</wheel_separation>
-      <wheelbase>0.488</wheelbase>
-      <wheel_radius>0.0762</wheel_radius>
-      <topic>cmd_vel</topic>
-      <odom_topic>odom</odom_topic>
-      <odom_publish_frequency>50</odom_publish_frequency>
-      <frame_id>odom</frame_id>
-      <child_frame_id>base_footprint</child_frame_id>
-      <tf_topic>odom_tf</tf_topic>
-      <min_velocity>-1.0</min_velocity>
-      <max_velocity>1.0</max_velocity>
-      <min_acceleration>-1.0</min_acceleration>
-      <max_acceleration>1.0</max_acceleration>
+      <parameters>/opt/erc_ws/install/erc_bringup/share/erc_bringup/config/controller_manager_cfg.yaml</parameters>
     </plugin>
   </gazebo>
   <ros2_control name="ros2_control_gazebo_system" type="system">
@@ -3052,304 +3032,4 @@
       <state_interface name="velocity"/>
     </joint>
   </ros2_control>
-  <gazebo reference="base_footprint">
-    <sensor name="base_footprint_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/base_footprint</topic>
-      <contact>
-        <collision>base_footprint_fixed_joint_lump__base_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="torso_lift_link">
-    <sensor name="torso_lift_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/torso_lift_link</topic>
-      <contact>
-        <collision>torso_lift_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="head_1_link">
-    <sensor name="head_1_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/head_1_link</topic>
-      <contact>
-        <collision>head_1_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="head_2_link">
-    <sensor name="head_2_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/head_2_link</topic>
-      <contact>
-        <collision>head_2_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_1_link">
-    <sensor name="arm_left_1_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_1_link</topic>
-      <contact>
-        <collision>arm_left_1_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_2_link">
-    <sensor name="arm_left_2_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_2_link</topic>
-      <contact>
-        <collision>arm_left_2_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_3_link">
-    <sensor name="arm_left_3_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_3_link</topic>
-      <contact>
-        <collision>arm_left_3_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_4_link">
-    <sensor name="arm_left_4_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_4_link</topic>
-      <contact>
-        <collision>arm_left_4_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_5_link">
-    <sensor name="arm_left_5_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_5_link</topic>
-      <contact>
-        <collision>arm_left_5_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_6_link">
-    <sensor name="arm_left_6_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_6_link</topic>
-      <contact>
-        <collision>arm_left_6_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_left_7_link">
-    <sensor name="arm_left_7_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_left_7_link</topic>
-      <contact>
-        <collision>arm_left_7_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_1_link">
-    <sensor name="arm_right_1_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_1_link</topic>
-      <contact>
-        <collision>arm_right_1_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_2_link">
-    <sensor name="arm_right_2_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_2_link</topic>
-      <contact>
-        <collision>arm_right_2_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_3_link">
-    <sensor name="arm_right_3_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_3_link</topic>
-      <contact>
-        <collision>arm_right_3_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_4_link">
-    <sensor name="arm_right_4_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_4_link</topic>
-      <contact>
-        <collision>arm_right_4_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_5_link">
-    <sensor name="arm_right_5_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_5_link</topic>
-      <contact>
-        <collision>arm_right_5_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_6_link">
-    <sensor name="arm_right_6_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_6_link</topic>
-      <contact>
-        <collision>arm_right_6_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="arm_right_7_link">
-    <sensor name="arm_right_7_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/arm_right_7_link</topic>
-      <contact>
-        <collision>arm_right_7_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_fingertip_left_link">
-    <sensor name="gripper_left_fingertip_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_fingertip_left_link</topic>
-      <contact>
-        <collision>gripper_left_fingertip_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_fingertip_right_link">
-    <sensor name="gripper_left_fingertip_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_fingertip_right_link</topic>
-      <contact>
-        <collision>gripper_left_fingertip_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_inner_finger_left_link">
-    <sensor name="gripper_left_inner_finger_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_inner_finger_left_link</topic>
-      <contact>
-        <collision>gripper_left_inner_finger_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_inner_finger_right_link">
-    <sensor name="gripper_left_inner_finger_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_inner_finger_right_link</topic>
-      <contact>
-        <collision>gripper_left_inner_finger_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_outer_finger_left_link">
-    <sensor name="gripper_left_outer_finger_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_outer_finger_left_link</topic>
-      <contact>
-        <collision>gripper_left_outer_finger_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_left_outer_finger_right_link">
-    <sensor name="gripper_left_outer_finger_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_left_outer_finger_right_link</topic>
-      <contact>
-        <collision>gripper_left_outer_finger_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_fingertip_left_link">
-    <sensor name="gripper_right_fingertip_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_fingertip_left_link</topic>
-      <contact>
-        <collision>gripper_right_fingertip_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_fingertip_right_link">
-    <sensor name="gripper_right_fingertip_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_fingertip_right_link</topic>
-      <contact>
-        <collision>gripper_right_fingertip_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_inner_finger_left_link">
-    <sensor name="gripper_right_inner_finger_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_inner_finger_left_link</topic>
-      <contact>
-        <collision>gripper_right_inner_finger_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_inner_finger_right_link">
-    <sensor name="gripper_right_inner_finger_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_inner_finger_right_link</topic>
-      <contact>
-        <collision>gripper_right_inner_finger_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_outer_finger_left_link">
-    <sensor name="gripper_right_outer_finger_left_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_outer_finger_left_link</topic>
-      <contact>
-        <collision>gripper_right_outer_finger_left_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
-  <gazebo reference="gripper_right_outer_finger_right_link">
-    <sensor name="gripper_right_outer_finger_right_link_contact" type="contact">
-      <always_on>true</always_on>
-      <update_rate>30</update_rate>
-      <topic>contacts/gripper_right_outer_finger_right_link</topic>
-      <contact>
-        <collision>gripper_right_outer_finger_right_link_collision</collision>
-      </contact>
-    </sensor>
-  </gazebo>
 </robot>
