@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: erc-2026:humble-harmonic
+    image: erc-2026:humble-mujoco
     container_name: erc_sim
     stdin_open: true
     tty: true

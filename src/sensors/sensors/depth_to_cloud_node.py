@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Depth-camera point cloud for the ERC head RGBD sensor.
 
-The Gazebo ``rgbd_camera`` advertises ``/head_front_camera/depth/points`` but
-never actually fills it, so RViz's DepthCloud and any downstream node get an
-empty depth cloud. This node rebuilds it the standard way: back-project every
+The simulator publishes a depth image but no point cloud, so RViz's DepthCloud
+and any downstream node get nothing. This node rebuilds it the standard way:
+back-project every
 valid pixel of the float32 depth image through the camera intrinsics and colour
 it with the aligned RGB image, publishing a normal ``sensor_msgs/PointCloud2``.
 

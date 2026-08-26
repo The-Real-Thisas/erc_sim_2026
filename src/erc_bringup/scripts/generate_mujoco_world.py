@@ -4,8 +4,8 @@ Generate the competition arena as a MuJoCo scene (MJCF).
 
 This file IS the arena definition: floor, walls, start zone, table, shelf,
 collection bin, books and number markers. Poses, sizes, masses and frictions
-below are the competition's own, carried over from the erc_world.sdf and model
-SDFs the arena was previously described by. The MJCF converter inlines this
+below are the competition's own, carried over from the SDF world and model
+files the arena was previously described by. The MJCF converter inlines this
 file's children into the robot model, so the robot and the arena end up in one
 MuJoCo model.
 

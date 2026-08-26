@@ -80,9 +80,21 @@ FOUR_BAR_ANCHOR = {'left': '0.014 -0.001 0', 'right': '0.014 -0.0015 0'}
 HARDWARE_PLUGIN_RE = re.compile(r'<plugin>[^<]*(?:GazeboSystem|GazeboSimSystem|'
                                 r'MujocoSystem\w*)</plugin>')
 
+# The base IMU. mujoco_ros2_control builds a ros2_control IMU sensor out of
+# three MJCF sensors whose names share a base and take these suffixes, and
+# imu_sensor_broadcaster turns that into a sensor_msgs/Imu.
+IMU_SENSOR = 'base_imu_sensor'
+IMU_SITE = 'base_imu_link'
+
 # The head camera, matched to an Intel RealSense D435 depth mode: a native 16:9
 # depth resolution at the datasheet's 87 deg horizontal field of view. MuJoCo
 # specifies a camera by its VERTICAL fov, which follows from these.
+#
+# This is the ONLY definition of the head camera's optics. The robot
+# description carries PAL's stock camera too, but that lives inside <gazebo>
+# sensor blocks which are stripped below and which nothing reads, so passing
+# --camera_model to generate_urdf.py will NOT change what the simulated camera
+# does. Change it here.
 CAM_W, CAM_H = 640, 360
 CAM_HFOV_RAD = 1.5184364492350666        # 87 deg
 
@@ -97,10 +109,12 @@ def strip_gazebo_blocks(urdf: str) -> str:
 
 
 def strip_transmissions(urdf: str) -> str:
-    # Every reduction in this robot is 1.0, so the transmissions carry no
-    # information - but mujoco_ros2_control demands a matching MuJoCo actuator
-    # per transmission actuator, so leaving them in would require inventing
-    # actuators that do nothing.
+    # mujoco_ros2_control demands a matching MuJoCo actuator for every
+    # transmission actuator, so leaving these in would mean inventing actuators
+    # that drive nothing. Every joint that is actually commanded gets a
+    # <position> actuator on the joint itself instead, which bypasses the
+    # transmission - including the gripper, whose PalGripperTransmission is the
+    # one block here with a reduction other than 1.0.
     n = urdf.count('<transmission')
     urdf = re.sub(r'[ \t]*<transmission( [^>]*)?>.*?</transmission>\n?', '',
                   urdf, flags=re.S)
@@ -192,6 +206,17 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'polycoef="0 {mult:g} 0 0 0" '
             f'solimp="0.95 0.99 0.001" solref="0.005 1"/>')
 
+    # The base IMU. mujoco_ros2_control assembles a ros2_control IMU sensor
+    # from three MJCF sensors whose names share a base and take these suffixes.
+    sensors = []
+    if f'name="{IMU_SITE}"' in urdf:
+        sensors.append(
+            f'        <framequat name="{IMU_SENSOR}_quat" objtype="site" '
+            f'objname="{IMU_SITE}"/>')
+        sensors.append(f'        <gyro name="{IMU_SENSOR}_gyro" site="{IMU_SITE}"/>')
+        sensors.append(
+            f'        <accelerometer name="{IMU_SENSOR}_accel" site="{IMU_SITE}"/>')
+
     connects, excludes = [], []
     for grip in ('left', 'right'):
         for finger in ('left', 'right'):
@@ -245,6 +270,9 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <actuator>
 {chr(10).join(actuators)}
       </actuator>
+      <sensor>
+{chr(10).join(sensors)}
+      </sensor>
       <equality>
 {chr(10).join(equalities)}
       </equality>
@@ -272,15 +300,14 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <modify_element type="geom" mesh="fingertip" class="collision" friction="1.2 0.015 0.002"/>
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
-           pos/quat are the floating base's initial qpos; erc_world.sdf spawns
-           tiago_pro yawed 90 degrees at the start zone. Do NOT lift it off the
+           pos/quat are the floating base's initial qpos; the arena spec starts
+           the robot yawed 90 degrees on the start zone. Do NOT lift it off the
            floor: the base plugin latches the pose whenever cmd_vel is stale,
            so a robot spawned in the air would simply stay there. -->
       <modify_element type="body" name="{root_body}" pos="{spawn_xyz}" euler="0 0 {spawn_yaw}"/>
     </processed_inputs>
   </mujoco_inputs>
 '''
-
 
 
 def main():
@@ -313,6 +340,20 @@ def main():
         sys.exit('ERROR: no simulator hardware plugin found in <ros2_control>, '
                  'so there is nothing to swap for the MuJoCo one')
     urdf = HARDWARE_PLUGIN_RE.sub(lambda _m: hardware, urdf, count=1)
+
+    imu_iface = ''
+    if f'name="{IMU_SITE}"' in urdf:
+        interfaces = ''.join(
+            f'      <state_interface name="{n}"/>\n' for n in (
+                'orientation.x', 'orientation.y', 'orientation.z', 'orientation.w',
+                'angular_velocity.x', 'angular_velocity.y', 'angular_velocity.z',
+                'linear_acceleration.x', 'linear_acceleration.y',
+                'linear_acceleration.z'))
+        imu_iface = (f'    <sensor name="{IMU_SENSOR}">\n'
+                     f'      <param name="mujoco_type">imu</param>\n'
+                     f'{interfaces}'
+                     f'    </sensor>\n')
+        urdf = urdf.replace('</ros2_control>', imu_iface + '  </ros2_control>', 1)
 
     inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw, fovy)
     urdf = urdf.replace('</robot>', inputs + '</robot>', 1)

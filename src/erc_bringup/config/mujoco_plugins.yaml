@@ -34,5 +34,8 @@
     # is all 20 books plus the collection bin. Naming a body that the scene
     # does not contain fails plugin init and takes the whole hardware
     # interface down with it.
+    # Not an indentation slip: FreeJointStatePublisherPlugin declares these
+    # without a plugin prefix, unlike BaseVelocityPlugin. Nesting them under
+    # free_joint_state_publisher above would silently do nothing.
     topic: "/model_states"
     publish_rate: 25.0

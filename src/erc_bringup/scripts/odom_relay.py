@@ -6,8 +6,11 @@ Relay MuJoCo's floating-base odometry onto the competition interface:
 odom is pinned to where the robot was when this node started, not to the world
 origin: the first received pose defines the odom frame, so /odom starts at
 identity however the robot was spawned, which is what wheel odometry on the
-real robot reports. Consumers that want world coordinates should go through TF
-rather than assuming odom and world coincide.
+real robot reports.
+
+Because odom is therefore NOT the world frame, and /model_states reports object
+poses in world coordinates, this node also publishes a static world -> odom
+transform. Convert through TF rather than assuming the two frames coincide.
 """
 
 import math
@@ -17,7 +20,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
-from tf2_ros import TransformBroadcaster
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
 
 def quat_to_yaw(q):
@@ -30,6 +33,7 @@ class OdomRelay(Node):
         super().__init__('odom_relay')
         self.origin = None  # (x, y, yaw) of the odom frame in world
         self.tf = TransformBroadcaster(self)
+        self.static_tf = StaticTransformBroadcaster(self)
         self.pub = self.create_publisher(Odometry, '/odom', 10)
         self.sub = self.create_subscription(
             Odometry, '/simulator/floating_base_state', self.cb,
@@ -45,6 +49,7 @@ class OdomRelay(Node):
             # (0,0,0) instead would put that 90 degrees into /odom from the
             # very first message.
             self.origin = (p.x, p.y, yaw)
+            self.publish_world_to_odom(msg.header.stamp)
         ox, oy, oyaw = self.origin
         c, s = math.cos(-oyaw), math.sin(-oyaw)
         dx, dy = p.x - ox, p.y - oy
@@ -79,6 +84,20 @@ class OdomRelay(Node):
         t.transform.rotation.z = out.pose.pose.orientation.z
         t.transform.rotation.w = out.pose.pose.orientation.w
         self.tf.sendTransform(t)
+
+
+    def publish_world_to_odom(self, stamp):
+        """Where the odom frame sits in the world, latched once at startup."""
+        ox, oy, oyaw = self.origin
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'world'
+        t.child_frame_id = 'odom'
+        t.transform.translation.x = ox
+        t.transform.translation.y = oy
+        t.transform.rotation.z = math.sin(oyaw / 2.0)
+        t.transform.rotation.w = math.cos(oyaw / 2.0)
+        self.static_tf.sendTransform(t)
 
 
 def main():

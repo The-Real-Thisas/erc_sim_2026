@@ -25,8 +25,8 @@ Examples:
     # Single left arm only
     ros2 run erc_bringup generate_urdf.py --arm_type_right no-arm
 
-    # With wrist camera
-    ros2 run erc_bringup generate_urdf.py --has_wrist_camera
+    # Navigation-only testing, no arms
+    ros2 run erc_bringup generate_urdf.py --arm_type_left no-arm --arm_type_right no-arm
 """
 
 import argparse
@@ -139,7 +139,9 @@ def main():
 
     # ── Boolean flags ──
     parser.add_argument('--has_wrist_camera', action='store_true',
-                        help='Mount a wrist camera on the end effector [flag, default: off]')
+                        help='Mount a wrist camera link on the end effector. Adds '
+                             'the link only - nothing renders it, so it is a '
+                             'kinematic placeholder [flag, default: off]')
 
     args = parser.parse_args()
 
@@ -180,8 +182,21 @@ def main():
 
     urdf = generate_urdf(**xacro_args)
 
-    output_dir = os.path.join(
+    # Prefer the source tree so the URDF is visible and editable on the host.
+    # With --symlink-install the share directory is a symlink to it anyway; the
+    # fallback only matters for a non-symlink build, where the file lands in the
+    # install space and the next colcon build would overwrite it.
+    share_urdf = os.path.join(
         get_package_share_directory('erc_description'), 'urdf')
+    source_urdf = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(__file__)),
+        '..', '..', 'erc_description', 'urdf'))
+    if os.path.isdir(os.path.dirname(source_urdf)):
+        output_dir = source_urdf
+    else:
+        output_dir = share_urdf
+        print('[generate_urdf] WARNING: writing into the install space; a '
+              'rebuild will overwrite this. Build with --symlink-install.')
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, 'tiago_pro.urdf')
 

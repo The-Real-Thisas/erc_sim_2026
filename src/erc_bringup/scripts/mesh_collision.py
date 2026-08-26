@@ -67,12 +67,13 @@ def face_planes(normals, tris):
     return [sorted(p) for p in planes], off_axis
 
 
-# Three deliberately skew directions. An axis-aligned ray can lie exactly in a
-# face plane or along the diagonal that splits a rectangular face into two
-# triangles, and then no edge rule is right: an inclusive test counts the hit
-# twice and a strict one counts it zero times. These directions are parallel to
-# no face and to no diagonal of an axis-aligned box, so the ordinary inclusive
-# test is safe.
+# Three deliberately skew directions. A ray that passes exactly through a shared
+# triangle edge - the diagonal splitting a rectangular face, or a box corner -
+# has no right answer: an inclusive edge test counts it in both triangles and
+# flips the parity, a strict one counts it in neither and flips it the other
+# way. Skewness does not make that impossible, so it is not relied on alone:
+# these directions lie in no axis-aligned face plane, and every point is cast
+# three ways and must agree, so a wrong cell would need three coincidences.
 RAY_DIRECTIONS = (
     (1.0, 0.31782, 0.12793),
     (0.24113, 1.0, 0.36713),

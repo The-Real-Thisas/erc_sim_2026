@@ -16,11 +16,14 @@ have to carry absolute paths and the arena also has to carry the seed:
     ERC_SEED=7 ros2 launch erc_bringup mujoco_simulation.launch.py headless:=false
 """
 
+import atexit
 import os
+import shutil
 import subprocess
 import tempfile
 
 from ament_index_python.packages import (
+    PackageNotFoundError,
     get_package_share_directory,
     get_package_prefix,
 )
@@ -33,7 +36,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
-# erc_world.sdf spawns tiago_pro at the start zone, yawed 90 degrees.
+# The robot starts on the start zone, yawed 90 degrees, as the arena spec has it.
 START_ZONE_XYZ = '0 0 0'
 START_ZONE_YAW = '1.5708'
 
@@ -55,6 +58,7 @@ def launch_setup(context, *args, **kwargs):
     # users on a shared machine and race between two concurrent launches,
     # and the converter reads these files from a separate process.
     workdir = tempfile.mkdtemp(prefix='erc_mujoco_')
+    atexit.register(shutil.rmtree, workdir, True)
 
     # ── The robot: competition URDF, retargeted at MuJoCo ──
     urdf_out = os.path.join(workdir, 'robot.urdf')
@@ -89,7 +93,13 @@ def launch_setup(context, *args, **kwargs):
         cmd = [os.path.join(scripts, 'generate_mujoco_world.py'), '-o', scene_path]
         if seed:
             cmd += ['--seed', seed]
-        subprocess.run(cmd, check=True)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                'Could not build the arena. It is generated from the meshes and '
+                'textures in erc_description; check that package is built.'
+            ) from exc
 
     manager_cfg = os.path.join(
         bringup_share, 'config', 'controller_manager_cfg.yaml')
@@ -148,6 +158,16 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': True}],
     )
 
+    # IMUSensorBroadcaster publishes on its own private topic; the competition
+    # exposes the base IMU as /base_imu.
+    imu_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='imu_relay',
+        arguments=['/imu_sensor_broadcaster/imu', '/base_imu'],
+        parameters=[{'use_sim_time': True}],
+    )
+
     odom_relay = Node(
         package='erc_bringup',
         executable='odom_relay.py',
@@ -165,6 +185,7 @@ def launch_setup(context, *args, **kwargs):
 
     controllers = TimerAction(period=5.0, actions=[
         spawner('joint_state_broadcaster'),
+        spawner('imu_sensor_broadcaster', controller_params),
         spawner('arm_left_controller', controller_params),
         spawner('arm_right_controller', controller_params),
         spawner('head_controller', controller_params),
@@ -178,24 +199,27 @@ def launch_setup(context, *args, **kwargs):
              parameters=[{'use_sim_time': True}], output='both'),
     ])
 
-    # The camera plugin publishes depth but no point cloud, exactly as the gz
-    # rgbd_camera did. The `sensors` package rebuilds it with a RealSense-D435
-    # noise model; its topic defaults already match the names below, and it is
-    # engine-agnostic. Delayed so there is exactly one publisher on the topic.
+    # The camera plugin publishes depth but no point cloud. The `sensors`
+    # package rebuilds it with a RealSense-D435 noise model; its topic defaults
+    # already match what this launch publishes. Delayed so it starts after the
+    # camera it consumes, rather than idling on an absent camera_info.
     depth_cloud = []
     try:
         sensors_launch = os.path.join(
             get_package_share_directory('sensors'), 'launch', 'depth_to_cloud.launch.py')
+    except PackageNotFoundError:
+        sensors_launch = None
+    if sensors_launch and os.path.exists(sensors_launch):
         depth_cloud.append(TimerAction(period=12.0, actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(sensors_launch),
                 condition=IfCondition(LaunchConfiguration('depth_cloud')))]))
-    except Exception as exc:
-        print(f'[mujoco_simulation] depth cloud NOT started - the `sensors` '
-              f'package is unavailable ({exc}). Build it with: '
-              f'colcon build --packages-select sensors --symlink-install')
+    else:
+        print('[mujoco_simulation] depth cloud NOT started - the `sensors` '
+              'package is unavailable. Build it with: '
+              'colcon build --packages-select sensors --symlink-install')
 
-    return [rsp, converter, control, depth_info_relay, odom_relay,
+    return [rsp, converter, control, depth_info_relay, imu_relay, odom_relay,
             controllers, gripper_clamp, *depth_cloud]
 
 

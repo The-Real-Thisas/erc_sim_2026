@@ -3,15 +3,7 @@
 <package format="3">
   <name>sensors</name>
   <version>0.1.0</version>
-  <description>
-    Sensor-level processing for the ERC 2026 head RGBD camera. Rebuilds the
-    depth-camera point cloud that the Gazebo rgbd_camera advertises but never
-    fills (back-projecting the float32 depth image through camera_info) and
-    applies an Intel RealSense D435-like noise model (range-dependent disparity
-    noise, sub-pixel quantisation, edge holes) so the cloud looks like a real
-    sensor's. Publishes a normal sensor_msgs/PointCloud2 plus a field-of-view
-    frustum marker.
-  </description>
+  <description>Sensor processing for the ERC 2026 head RGB-D camera: rebuilds the depth point cloud the simulator does not publish, with a RealSense-D435 noise model.</description>
   <maintainer email="bjonguk@gmail.com">dfl-perception</maintainer>
   <license>Apache-2.0</license>
 

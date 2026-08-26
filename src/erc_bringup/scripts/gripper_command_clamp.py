@@ -12,7 +12,7 @@ Internal topics (published, feed the real controllers):
     /gripper_left_controller_raw/joint_trajectory
     /gripper_right_controller_raw/joint_trajectory
 
-The controllers themselves are renamed to *_raw in controller_manager.yaml
+The controllers themselves are renamed to *_raw in controller_manager_cfg.yaml
 and controller_params.yaml, freeing up the public topic names for this
 node to own.
 """

@@ -4,6 +4,7 @@
     use_sim_time: true
 
     joint_state_broadcaster.type: joint_state_broadcaster/JointStateBroadcaster
+    imu_sensor_broadcaster.type: imu_sensor_broadcaster/IMUSensorBroadcaster
     arm_left_controller.type: joint_trajectory_controller/JointTrajectoryController
     arm_right_controller.type: joint_trajectory_controller/JointTrajectoryController
     head_controller.type: joint_trajectory_controller/JointTrajectoryController

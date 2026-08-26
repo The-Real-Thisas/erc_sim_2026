@@ -47,3 +47,8 @@ gripper_right_controller_raw:
     joints: [gripper_right_finger_joint]
     command_interfaces: [position]
     state_interfaces: [position, velocity]
+
+imu_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: base_imu_sensor
+    frame_id: base_imu_link

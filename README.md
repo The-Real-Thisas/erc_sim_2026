@@ -52,12 +52,16 @@ colours and the number-marker order, and the same seed always produces the
 same arena.
 
 **Not currently simulated:** the base LiDARs (`/scan_front_raw`,
-`/scan_rear_raw`), the base IMU (`/base_imu`), and the contact sensors
-(`/contacts`, `/bin_contacts`). The LiDARs and IMU are reachable —
-`mujoco_ros2_control` ships a 3D-lidar engine plugin, and IMUs are exposed as
-`ros2_control` sensor interfaces — but contact sensors have no equivalent in
-`mujoco_ros2_control` at all and would need a new plugin. Everything else on
-the topic tables below is present.
+`/scan_rear_raw`) and the contact sensors (`/contacts`, `/bin_contacts`).
+Everything else on the topic tables below is present, including `/base_imu`.
+
+The LiDARs are the more interesting gap. `mujoco_ros2_control` does ship a
+3D-lidar engine plugin, and it works — but it casts its rays from the sensor's
+own frame with no self-exclusion, and on this robot both scanners are mounted
+inside the base's collision hull. Every ray then returns the chassis at 21 mm.
+Fixing it means either patching the extension to exclude the robot body or
+carving the hull, so it is left out rather than shipped reading itself. Contact
+sensors have no equivalent in `mujoco_ros2_control` at all.
 
 ### Launch arguments
 
@@ -98,7 +102,7 @@ of them are deliberate:
   `mu2=0` lateral-slip patch, since the base is driven kinematically.
 - **Fingertip friction is 1.2** (rubber pad on paper) and **books use
   `condim="6"`** with torsional and rolling friction, where the SDF sets only
-  `mu`/`mu2`.
+  a single sliding friction coefficient.
 - **The base is frozen while `/cmd_vel` is stale**, so the arm can no longer
   push the base around.
 
@@ -111,10 +115,10 @@ TIAGo Pro by PAL Robotics — omnidirectional mobile manipulator.
 - Two 7-DOF arms (left and right) with PAL Pro grippers
 - Pan-tilt head (2 DOF)
 - Prismatic torso lift
-- Intel RealSense D435i RGB-D camera (head-mounted)
+- Intel RealSense D435 RGB-D camera (head-mounted)
 - Two 270° LiDARs (front and rear, base-mounted) — *present in the robot
   description, not currently simulated*
-- IMU (base) — *present in the robot description, not currently simulated*
+- IMU (base)
 
 ## ROS 2 topics and controllers
 
@@ -152,11 +156,21 @@ All joint controllers use `joint_trajectory_controller/JointTrajectoryController
 |---|---|---|
 | `arm_left_controller` | `/arm_left_controller/joint_trajectory` | `arm_left_1_joint` .. `arm_left_7_joint` |
 | `arm_right_controller` | `/arm_right_controller/joint_trajectory` | `arm_right_1_joint` .. `arm_right_7_joint` |
-| `gripper_left_controller_raw` | `/gripper_left_controller_raw/joint_trajectory` | `gripper_left_finger_joint` |
-| `gripper_right_controller_raw` | `/gripper_right_controller_raw/joint_trajectory` | `gripper_right_finger_joint` |
+| `gripper_left_controller_raw` | `/gripper_left_controller/joint_trajectory` *(see note)* | `gripper_left_finger_joint` |
+| `gripper_right_controller_raw` | `/gripper_right_controller/joint_trajectory` *(see note)* | `gripper_right_finger_joint` |
 | `head_controller` | `/head_controller/joint_trajectory` | `head_1_joint`, `head_2_joint` |
 | `torso_controller` | `/torso_controller/joint_trajectory` | `torso_lift_joint` |
+| `imu_sensor_broadcaster` | `/base_imu` (relayed) | Base IMU (read-only) |
 | `joint_state_broadcaster` | `/joint_states` | All joints (read-only) |
+
+**Note on the grippers.** The controllers are named `*_raw`, but publish to the
+un-suffixed `/gripper_{left,right}_controller/joint_trajectory`. A small node
+(`erc_bringup/scripts/gripper_command_clamp.py`) sits between the two and
+**rejects** any point outside the finger joint's safe range, then forwards the
+rest to the `_raw` controller. Commanding the `_raw` topic directly bypasses
+that check; the gripper jams permanently if driven past its limit, so use the
+un-suffixed topic. The usable range is `0.000` (closed) to `0.069` (open); the
+joint limit itself is `-0.001 .. 0.070`.
 
 **Examples:**
 ```bash
@@ -172,7 +186,7 @@ ros2 topic pub --once /arm_right_controller/joint_trajectory trajectory_msgs/msg
   arm_right_5_joint, arm_right_6_joint, arm_right_7_joint], \
   points: [{positions: [-0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], time_from_start: {sec: 2}}]}"
 
-# — Left gripper: close (0.0 = closed, 0.04 = open) —
+# — Left gripper: close (0.0 = closed, 0.069 = fully open) —
 ros2 topic pub --once /gripper_left_controller/joint_trajectory trajectory_msgs/msg/JointTrajectory \
   "{joint_names: [gripper_left_finger_joint], \
   points: [{positions: [0.0], time_from_start: {sec: 1}}]}"
@@ -214,7 +228,7 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `/head_front_camera/head_front_camera/depth/image_rect_raw` | `sensor_msgs/msg/Image` | Head depth camera (float32) |
 | `/head_front_camera/head_front_camera/depth/camera_info` | `sensor_msgs/msg/CameraInfo` | Head depth camera info |
 | `/head_front_camera/head_front_camera/depth/color/points` | `sensor_msgs/msg/PointCloud2` | Rebuilt by `sensors/depth_to_cloud` |
-| `/base_imu` | `sensor_msgs/msg/Imu` | Base IMU — *not currently simulated* |
+| `/base_imu` | `sensor_msgs/msg/Imu` | Base IMU, via `imu_sensor_broadcaster` |
 | `/contacts` | — | Contact sensors — *not currently simulated* |
 | `/bin_contacts` | — | *not currently simulated* |
 | `/spectator/color` | `sensor_msgs/msg/Image` | Fixed arena view |
@@ -228,17 +242,17 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 |---|---|---|
 | **Head RGB camera** | Resolution | 640 × 360 px |
 | | Horizontal FOV | 1.518 rad (87°) |
-| | Vertical FOV | 0.977 rad (56°) |
+| | Vertical FOV | 0.981 rad (56.19°) |
 | | Update rate | 30 Hz |
 | **Head depth camera** | Resolution | 640 × 360 px |
-| | Depth range | 0.2 – 8.0 m |
+| | Depth range | 0.2 m near plane; the point cloud is clipped to 8 m by `sensors/depth_to_cloud` |
 | | Update rate | 30 Hz |
 | **Front / Rear LiDAR** | Model | SICK TIM551 *(not currently simulated)* |
 | | FOV | ~270° |
 | | Range | 0.05 – 25.0 m |
 | | Samples | 818 (0.33°/step) |
 | | Update rate | 10 Hz |
-| **Base IMU** | Update rate | 100 Hz *(not currently simulated)* |
+| **Base IMU** | Update rate | controller-manager rate (250 Hz) |
 
 
 ## Software stack
@@ -323,3 +337,5 @@ Before opening a new issue, search existing issues to check whether it has alrea
 **Build errors after mixing build flags** — always build with `--symlink-install`. Mixing symlink and non-symlink builds leaves stale artifacts; recover with `rm -rf build/ install/ log/` and rebuild.
 
 **Rebuild after Dockerfile changes** — run `./docker/up.sh --build` to rebuild the image.
+
+**DDS discovery storms on a busy network** — the container leaves `ROS_LOCALHOST_ONLY` unset (`0`) so a second machine, a host-side RViz, or a real-robot bridge can see the topics. On a crowded LAN the participant count alone can stall the simulation; export `ROS_LOCALHOST_ONLY=1` before launching to confine DDS to loopback.

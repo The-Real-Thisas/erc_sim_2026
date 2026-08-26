@@ -1,9 +1,9 @@
 """Rebuild the ERC head depth-camera point cloud with a RealSense-D435 noise model.
 
-The Gazebo ``rgbd_camera`` advertises ``/head_front_camera/depth/points`` but
-never fills it. This node back-projects the float32 depth image through
-``camera_info``, applies a RealSense-D435-like noise model, and publishes a
-normal ``sensor_msgs/PointCloud2`` (plus a field-of-view frustum marker).
+The simulator publishes a depth image but no point cloud. This node
+back-projects the float32 depth image through ``camera_info``, applies a
+RealSense-D435-like noise model, and publishes a normal
+``sensor_msgs/PointCloud2`` (plus a field-of-view frustum marker).
 """
 
 from launch import LaunchDescription
