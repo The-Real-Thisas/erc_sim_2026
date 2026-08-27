@@ -39,7 +39,7 @@ To open additional terminals into the running container:
 ./docker/attach.sh                            # Do NOT run ./docker/up.sh again as this will kill your running container
 ```
 
-The clip below is the simulator running the competition arena.
+The video below is a visual guide for the above steps.
 
 [docs/assets/quickstart_mujoco.mp4](docs/assets/quickstart_mujoco.mp4)
 
