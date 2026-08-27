@@ -41,7 +41,8 @@ To open additional terminals into the running container:
 
 The video below is a visual guide for the above steps.
 
-[docs/assets/quickstart_mujoco.mp4](docs/assets/quickstart_mujoco.mp4)
+https://github.com/user-attachments/assets/05af53b4-abcf-4add-b4d2-149e7cda9941
+
 
 ## Robot platform
 
