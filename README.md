@@ -61,9 +61,11 @@ TIAGo Pro by PAL Robotics — omnidirectional mobile manipulator.
 
 ### Mobile base
 
-The base is holonomic and is driven as a whole body by `mujoco_ros2_control_plugins/BaseVelocityPlugin`, not through the wheel joints. Publish a standard `Twist` message to move the robot in any direction.
+The base is holonomic and is driven through its wheels. `mecanum_drive_controller` turns `/cmd_vel` into the four wheel velocities, and `mujoco_ros2_control_plugins/BaseVelocityPlugin` turns the wheels' measured rotation back into a force-limited push on the floating base, capped at what four wheels at PAL's 6 Nm effort limit could develop (315 N, 147 Nm). Publish a standard `Twist` message to move the robot in any direction.
 
-**The base is driven kinematically.** The plugin writes the base velocity straight into the simulation each step, so contact cannot slow the robot down: it will carry an arm through a shelf without resisting. Obstacle avoidance has to come from whatever is planning the motion, not from the physics. The arm joints are not like this — they are force-controlled and do respond to contact.
+**Contact resists the base.** Driving into a shelf saturates that force and stalls the robot rather than carrying an arm through it. The wheels keep turning against the obstruction, so `/odom` — which `mecanum_drive_controller` dead-reckons from the wheel encoders, exactly as the real robot's controller does — drifts away from the truth while the robot is stuck. **`/odom` is not ground truth.** Over a 17 s, six-leg path it is accurate to about 0.4% of distance travelled; against an obstacle it diverges without bound, as wheel odometry does. If you need the true pose, take it from `/model_states` and convert through the static `world` → `odom` transform.
+
+The mecanum roller pattern is not modelled as geometry. MuJoCo has no equivalent of the `fdir1` friction direction the competition's Gazebo build uses to point each wheel's grip along its 45° roller axis, and only a capsule's anisotropic friction frame follows the geom — which a spinning wheel cannot exploit. The wheel geoms therefore carry the robot's weight and collide with the world but do not resist sliding; the mecanum traction is supplied analytically from their rotation instead.
 
 | Topic | Type | Direction | Description |
 |---|---|---|---|
@@ -163,8 +165,10 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `/spectator/depth` | `sensor_msgs/msg/Image` | |
 | `/spectator/camera_info` | `sensor_msgs/msg/CameraInfo` | |
 | `/model_states` | `mujoco_ros2_control_msgs/msg/FreeJointStateArray` | Ground-truth pose and twist of every free body, in the world frame |
+| `/contacts` | `ros_gz_interfaces/msg/Contacts` | Every contact on the robot — base, torso, head, both arms, both grippers |
+| `/bin_contacts` | `ros_gz_interfaces/msg/Contacts` | Every contact on the collection bin |
 
-There are no contact-sensor topics. Grasp force is readable from the `effort` field of `/joint_states`, and object placement from `/model_states`.
+**Contacts.** Both topics carry one entry per colliding pair, with the contact points, normals, penetration depths and world-frame wrenches in parallel arrays. `/bin_contacts` is the signal that a book has been placed: a book in the bin shows up as a pair against `bin_floor`. The two collision entities are named the way Gazebo named them — a robot link reports `<link>_collision`, and arena geometry reports its own name (`bin_floor`, `book_col_3_row_4_red_geom`, `erc_shelf_collision_12`). Grasp force is also readable from the `effort` field of `/joint_states`, and object placement from `/model_states`. The base's own contacts are reported, but remember it is driven kinematically: nothing it bumps into slows it down.
 
 ### Sensor specifications
 
@@ -183,6 +187,8 @@ There are no contact-sensor topics. Grasp force is readable from the `effort` fi
 | | Samples | 818 (0.33°/step) |
 | | Update rate | 10 Hz |
 | **Base IMU** | Update rate | 250 Hz |
+| **Contacts** | `/contacts` update rate | 30 Hz |
+| | `/bin_contacts` update rate | 10 Hz |
 
 
 ## Software stack
@@ -211,7 +217,7 @@ There are no contact-sensor topics. Grasp force is readable from the `effort` fi
 
 ## URDF generation
 
-The robot URDF is generated from PAL's xacro sources and saved to `src/erc_description/urdf/tiago_pro.urdf` which is accessible on the host for inspection. Because the workspace is built with `--symlink-install`, the URDF is picked up immediately when created with no rebuild required. The simulator-specific retarget — MuJoCo actuators, gripper loop closures, camera and gravity compensation — is applied on top of that file at launch, so the URDF stays the single description that both the simulator and any real-robot tooling start from.
+The robot URDF is generated from PAL's xacro sources and saved to `src/erc_description/urdf/tiago_pro.urdf` which is accessible on the host for inspection. Because the workspace is built with `--symlink-install`, the URDF is picked up immediately when created with no rebuild required. The simulator-specific retarget — MuJoCo actuators, gripper loop closures, camera placement and gravity compensation — is applied on top of that file at launch, so the URDF stays the single description that both the simulator and any real-robot tooling start from. The head camera's optics are stated only in that URDF, in its `head_front_camera_link` sensor block, and read back out at launch, so the resolution and field of view below can be checked against the file.
 
 ## Arena
 
@@ -241,7 +247,7 @@ Before opening a new issue, search existing issues to check whether it has alrea
 
 **Controllers not activating** — check that `erc_bringup` was built: `colcon build --symlink-install --packages-select erc_bringup && source install/setup.bash`
 
-**Base not strafing (lateral movement)** — ensure you're publishing to `/cmd_vel` with `linear.y` set. The base is holonomic and driven directly, so lateral motion does not depend on wheel friction.
+**Base not strafing (lateral movement)** — ensure you're publishing to `/cmd_vel` with `linear.y` set, and check that `mecanum_drive_controller` is active (`ros2 control list_controllers`). Nothing moves the base if that controller is not running: the wheels stay still and the base servo has nothing to follow.
 
 **Build errors after mixing build flags** — always build with `--symlink-install`. Mixing symlink and non-symlink builds leaves stale artifacts; recover with `rm -rf build/ install/ log/` and rebuild.
 

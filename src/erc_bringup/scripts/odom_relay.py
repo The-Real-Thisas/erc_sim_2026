@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """
-Relay MuJoCo's floating-base odometry onto the competition interface:
-/simulator/floating_base_state (world frame) -> /odom + TF odom->base_footprint.
+Publish the competition's odometry interface: /odom + TF odom -> base_footprint,
+plus the static world -> odom transform.
 
-odom is pinned to where the robot was when this node started, not to the world
-origin: the first received pose defines the odom frame, so /odom starts at
-identity however the robot was spawned, which is what wheel odometry on the
-real robot reports.
+The odometry itself is NOT ground truth. mecanum_drive_controller integrates it
+from the four wheel encoders, exactly as gz-sim-mecanum-drive-system does in the
+competition's Gazebo build and as the real robot's own controller does, so it
+slips and drifts whenever the wheels turn further than the base actually moved -
+driving into an obstacle being the obvious case. This node only republishes that
+odometry under the competition's topic and frame names and broadcasts its
+transform; it must never be "corrected" against /simulator/floating_base_state,
+which is the ground truth a solution is not supposed to have.
 
-Because odom is therefore NOT the world frame, and /model_states reports object
-poses in world coordinates, this node also publishes a static world -> odom
-transform. Convert through TF rather than assuming the two frames coincide.
+Wheel odometry starts at identity wherever the robot was spawned, so the odom
+frame is NOT the world frame - and /model_states reports object poses in world
+coordinates. This node therefore also publishes a static world -> odom transform,
+latched from the spawn pose on /simulator/floating_base_state. Convert through TF
+rather than assuming the two frames coincide.
 """
 
 import math
@@ -28,6 +34,9 @@ def quat_to_yaw(q):
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
+WHEEL_ODOM_TOPIC = '/mecanum_drive_controller/odometry'
+
+
 class OdomRelay(Node):
     def __init__(self):
         super().__init__('odom_relay')
@@ -36,53 +45,40 @@ class OdomRelay(Node):
         self.static_tf = StaticTransformBroadcaster(self)
         self.pub = self.create_publisher(Odometry, '/odom', 10)
         self.sub = self.create_subscription(
-            Odometry, '/simulator/floating_base_state', self.cb,
+            Odometry, WHEEL_ODOM_TOPIC, self.cb, 10)
+        # Ground truth, used for one thing only: to find out where the robot was
+        # spawned so the world -> odom transform can be published. The
+        # subscription is dropped as soon as that is known.
+        self.spawn_sub = self.create_subscription(
+            Odometry, '/simulator/floating_base_state', self.spawn_cb,
             QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT))
 
-    def cb(self, msg: Odometry):
+    def spawn_cb(self, msg: Odometry):
+        if self.origin is not None:
+            return
         p = msg.pose.pose.position
-        q = msg.pose.pose.orientation
-        yaw = quat_to_yaw(q)
-        if self.origin is None:
-            # Latch the spawn pose so /odom starts at identity, as wheel
-            # odometry does. The robot spawns yawed 90 degrees, so pinning at
-            # (0,0,0) instead would put that 90 degrees into /odom from the
-            # very first message.
-            self.origin = (p.x, p.y, yaw)
-            self.publish_world_to_odom(msg.header.stamp)
-        ox, oy, oyaw = self.origin
-        c, s = math.cos(-oyaw), math.sin(-oyaw)
-        dx, dy = p.x - ox, p.y - oy
-        x, y = c * dx - s * dy, s * dx + c * dy
-        dyaw = yaw - oyaw
+        self.origin = (p.x, p.y, quat_to_yaw(msg.pose.pose.orientation))
+        self.publish_world_to_odom(msg.header.stamp)
+        self.destroy_subscription(self.spawn_sub)
+        self.spawn_sub = None
 
+    def cb(self, msg: Odometry):
+        """Republish the wheel odometry under the competition's names."""
         out = Odometry()
         out.header.stamp = msg.header.stamp
         out.header.frame_id = 'odom'
         out.child_frame_id = 'base_footprint'
-        out.pose.pose.position.x = x
-        out.pose.pose.position.y = y
-        out.pose.pose.position.z = 0.0
-        out.pose.pose.orientation.z = math.sin(dyaw / 2.0)
-        out.pose.pose.orientation.w = math.cos(dyaw / 2.0)
-        # nav_msgs/Odometry defines twist in the CHILD frame. MuJoCo reports
-        # the free joint's raw qvel, which is world-frame, so rotate the linear
-        # part into the base frame; the yaw rate is the same in both.
+        out.pose = msg.pose
         out.twist = msg.twist
-        vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
-        cy, sy = math.cos(-yaw), math.sin(-yaw)
-        out.twist.twist.linear.x = cy * vx - sy * vy
-        out.twist.twist.linear.y = sy * vx + cy * vy
         self.pub.publish(out)
 
         t = TransformStamped()
         t.header.stamp = msg.header.stamp
         t.header.frame_id = 'odom'
         t.child_frame_id = 'base_footprint'
-        t.transform.translation.x = x
-        t.transform.translation.y = y
-        t.transform.rotation.z = out.pose.pose.orientation.z
-        t.transform.rotation.w = out.pose.pose.orientation.w
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
+        t.transform.rotation = msg.pose.pose.orientation
         self.tf.sendTransform(t)
 
 

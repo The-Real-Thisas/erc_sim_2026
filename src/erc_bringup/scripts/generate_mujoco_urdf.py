@@ -17,8 +17,8 @@ ros2_control joint set. Applies only what MuJoCo needs:
          PAL's own tiago_pro_mujoco pids.yaml (p -> kp, u_clamp -> forcerange)
        - <equality> joint couplings replacing the URDF <mimic> four-bar
          constraints that MJCF conversion drops
-       - the head camera as a MuJoCo RGB-D camera on the optical frame
-         (matched to the competition's D435 retarget: 640x360, 56 deg vfov)
+       - the head camera as a MuJoCo RGB-D camera on the optical frame,
+         at the resolution and field of view the competition URDF states
 The camera needs no frame of its own: the converter treats the named site as a
 REP-103 optical frame and applies the optical->MuJoCo rotation itself.
 
@@ -66,6 +66,47 @@ PAL_GAINS = {
     'gripper_right_finger_joint': (300.0,   8.0,    None),
 }
 
+# The four mecanum wheels, in the order the mecanum kinematics wants them:
+# front-left, front-right, rear-left, rear-right. The kinematic constants that go
+# with them - radius 0.0762 m and the yaw lever arm lx+ly = 0.46717 m, from hub
+# positions (+-0.244, +-0.22317) measured off the compiled model - are consumed by
+# mecanum_drive_controller and BaseVelocityPlugin, so they live in
+# controller_params.yaml and mujoco_plugins.yaml rather than here.
+WHEEL_JOINTS = ('wheel_front_left_joint', 'wheel_front_right_joint',
+                'wheel_rear_left_joint', 'wheel_rear_right_joint')
+# PAL's <limit effort="6.0"> on each wheel joint. Four wheels at that torque is
+# 4 * 6.0 / 0.0762 = 315 N of traction and 315 * 0.46717 = 147 Nm of yaw torque;
+# those are the caps mujoco_plugins.yaml puts on the base servo.
+WHEEL_EFFORT = 6.0
+# PAL ships <dynamics damping="1.0" friction="2.0"/> on the wheel joints. Those are
+# motor-side numbers that were never referred through the gearbox: 2.0 Nm of dry
+# friction is 26 N of drag per wheel before it will turn at all, and 1.0 Nm/(rad/s)
+# of damping costs 6.6 Nm at 0.5 m/s -- more than the 6.0 Nm the joint is allowed to
+# produce, so the wheel simply cannot reach its commanded speed and the encoders
+# under-read everything above ~0.3 m/s. Replace them with bearing-scale values so the
+# wheel speed, and therefore the odometry derived from it, is usable.
+WHEEL_DAMPING = 0.01
+WHEEL_FRICTIONLOSS = 0.0
+# Reflected inertia of the hub motor and gearbox, which a URDF cannot express and
+# PAL's therefore does not carry. Without it the wheel's own inertia is 4e-4 kg m2,
+# far too light for a velocity servo to hold at this timestep: the servo rang, and
+# one command in six came out 7% low with several percent of cross-axis coupling.
+# Anything from 0.01 upwards removes it completely.
+WHEEL_ARMATURE = 0.01
+# Wheel velocity-servo gain. The base servo chases the mecanum forward kinematics of
+# the wheels' MEASURED speed, so any lag between a wheel's command and its actual
+# speed lands directly on the base: the lag is (ground drag torque)/kv, and at kv=1
+# it cost 3-43% of the commanded twist. kv=20 with the friction below holds every
+# axis within 0.7%; pushing either much further makes the contact solver ring.
+WHEEL_KV = 20.0
+# Tangential friction of the wheel geoms against the floor. The rollers are not
+# modelled as geometry, so a wheel that gripped would fight the analytic traction
+# instead of producing it -- the same reason the competition's Gazebo build zeroes
+# mu2 perpendicular to the roller axis, except that here there is no roller axis to
+# keep grip along, so all of it goes. The wheels still carry the robot's weight and
+# still collide with the world; they just do not resist sliding.
+WHEEL_FRICTION = '0.01 0.001 0.0001'
+
 # The gripper is a four-bar linkage: the fingertip is pinned to BOTH the inner
 # finger (a URDF joint) and the outer finger (a loop the URDF cannot express,
 # so it fakes it with a <mimic> ratio). MuJoCo can close the loop for real, so
@@ -107,17 +148,12 @@ LASER_RATE = 10.0
 IMU_SENSOR = 'base_imu_sensor'
 IMU_SITE = 'base_imu_link'
 
-# The head camera, matched to an Intel RealSense D435 depth mode: a native 16:9
-# depth resolution at the datasheet's 87 deg horizontal field of view. MuJoCo
-# specifies a camera by its VERTICAL fov, which follows from these.
-#
-# This is the ONLY definition of the head camera's optics. The robot
-# description carries PAL's stock camera too, but that lives inside <gazebo>
-# sensor blocks which are stripped below and which nothing reads, so passing
-# --camera_model to generate_urdf.py will NOT change what the simulated camera
-# does. Change it here.
-CAM_W, CAM_H = 640, 360
-CAM_HFOV_RAD = 1.5184364492350666        # 87 deg
+# The head camera. Its optics are defined once, in the robot description's own
+# head camera sensor (generate_urdf.py retargets PAL's stock module to the
+# competition's D435 there), and read back out here before strip_gazebo_blocks
+# deletes the block - so the simulated camera cannot drift from the one the
+# shipped URDF describes. Unlike the scanners above, nothing here is copied.
+HEAD_CAMERA_LINK = 'head_front_camera_link'
 
 
 def strip_gazebo_blocks(urdf: str) -> str:
@@ -164,6 +200,36 @@ def strip_laser_housings(urdf: str) -> str:
         urdf = urdf[:m.start()] + m.group(1) + body + m.group(3) + urdf[m.end():]
         n += count
     print(f'stripped {n} laser housing visual/collision elements')
+    return urdf
+
+
+def command_wheels(urdf: str) -> str:
+    """Give the wheel joints a velocity command interface.
+
+    generate_urdf.py leaves them state-only because the competition's Gazebo build
+    drives them from the gz mecanum plugin, outside ros2_control. Here
+    mecanum_drive_controller commands them through ros2_control like any other joint,
+    so each needs a command interface to claim -- and a matching MuJoCo <velocity>
+    actuator, added in build_mujoco_inputs.
+    """
+    n = 0
+    for joint in WHEEL_JOINTS:
+        state_only = (f'<joint name="{joint}">\n'
+                      f'      <state_interface name="position"/>\n')
+        if state_only not in urdf:
+            print(f'note: {joint} is not a state-only <ros2_control> joint; '
+                  f'leaving it alone')
+            continue
+        urdf = urdf.replace(state_only,
+                            f'<joint name="{joint}">\n'
+                            f'      <command_interface name="velocity"/>\n'
+                            f'      <state_interface name="position"/>\n', 1)
+        n += 1
+    if n and n != len(WHEEL_JOINTS):
+        sys.exit(f'ERROR: gave {n} of {len(WHEEL_JOINTS)} wheels a command '
+                 f'interface. A half-commanded base would drive on some wheels '
+                 f'and drag on the others.')
+    print(f'{n} wheels given a velocity command interface')
     return urdf
 
 
@@ -214,14 +280,38 @@ def root_link(urdf: str) -> str:
     return roots.pop()
 
 
-def head_camera_fovy() -> float:
-    """Vertical FOV in degrees, from the horizontal FOV and the aspect ratio."""
-    return math.degrees(
-        2 * math.atan(math.tan(CAM_HFOV_RAD / 2) * CAM_H / CAM_W))
+def head_camera_optics(urdf: str):
+    """(width, height, vertical fov in degrees) read from the robot description.
+
+    MuJoCo specifies a camera by its VERTICAL fov, which follows from the
+    horizontal one and the aspect ratio. Both head sensors are read and have to
+    agree: MuJoCo renders ONE camera for both the colour and the depth stream,
+    so optics that differ between them cannot be honoured at all.
+    """
+    block = re.search(r'<gazebo reference="' + HEAD_CAMERA_LINK + r'">.*?</gazebo>',
+                      urdf, re.S)
+    if not block:
+        sys.exit(f'ERROR: no <gazebo reference="{HEAD_CAMERA_LINK}"> in the URDF, '
+                 f'so the head camera has no optics to take')
+    specs = set()
+    for cam in re.findall(r'<camera [^>]*>.*?</camera>', block.group(0), re.S):
+        got = [re.search(tag, cam) for tag in (r'<width>(\d+)</width>',
+                                               r'<height>(\d+)</height>',
+                                               r'<horizontal_fov>([^<]+)</horizontal_fov>')]
+        if not all(got):
+            sys.exit('ERROR: the head camera sensor is missing a resolution or '
+                     'a field of view; regenerate the URDF with generate_urdf.py')
+        w, h, hfov = got
+        specs.add((int(w.group(1)), int(h.group(1)), float(hfov.group(1))))
+    if len(specs) != 1:
+        sys.exit(f'ERROR: the head camera sensors disagree on their optics '
+                 f'{sorted(specs)}; MuJoCo has one camera to render both with')
+    w, h, hfov = specs.pop()
+    return w, h, math.degrees(2 * math.atan(math.tan(hfov / 2) * h / w))
 
 
 def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
-                        fovy: float) -> str:
+                        cam_w: int, cam_h: int, fovy: float) -> str:
     lims = joint_limits(urdf)
     root_body = root_link(urdf)
     actuators = []
@@ -235,6 +325,15 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'        <position name="{joint}" joint="{joint}" kp="{kp:g}" '
             f'{damping} ctrlrange="{lo:.6g} {hi:.6g}" '
             f'forcerange="{-clamp:g} {clamp:g}"/>')
+
+    # The wheels are commanded joints here, unlike in the competition Gazebo build
+    # where the gz mecanum plugin drove them behind ros2_control's back. They are
+    # velocity-servoed at PAL's own effort limit, so a stalled base shows up as wheels
+    # turning against it -- which is what makes the wheel odometry drift honestly.
+    for joint in WHEEL_JOINTS:
+        actuators.append(
+            f'        <velocity name="{joint}" joint="{joint}" kv="{WHEEL_KV:g}" '
+            f'forcerange="{-WHEEL_EFFORT:g} {WHEEL_EFFORT:g}"/>')
 
     # PAL's real arm controllers apply gravity feedforward in firmware, so the
     # PID clamps (26/43 Nm) are headroom on top of gravity, not inclusive of
@@ -265,6 +364,12 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'        <joint joint1="{mimic}" joint2="{driven}" '
             f'polycoef="0 {mult:g} 0 0 0" '
             f'solimp="0.95 0.99 0.001" solref="0.005 1"/>')
+
+    wheel_dynamics = '\n'.join(
+        f'      <modify_element type="joint" name="{joint}" '
+        f'damping="{WHEEL_DAMPING:g}" frictionloss="{WHEEL_FRICTIONLOSS:g}" '
+        f'armature="{WHEEL_ARMATURE:g}"/>'
+        for joint in WHEEL_JOINTS if f'name="{joint}"' in urdf)
 
     lidar_instances, sensors = [], []
     for name, site in LASERS:
@@ -372,16 +477,22 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <!-- The converter treats the site as a REP-103 optical frame and applies
            the optical->MuJoCo rotation itself. -->
       <camera site="head_front_camera_color_optical_frame" name="head_front_camera"
-              fovy="{fovy:.6g}" mode="fixed" resolution="{CAM_W} {CAM_H}"/>
-      <!-- The base is driven kinematically (BaseVelocityPlugin writes the
-           freejoint's planar qvel), so wheel-ground friction only fights
-           strafe/rotation. Near-zero friction mirrors the competition's own
-           mu2=0 lateral-slip patch. Geoms are addressed by (mesh, class). -->
+              fovy="{fovy:.6g}" mode="fixed" resolution="{cam_w} {cam_h}"/>
+      <!-- The mecanum roller pattern is not modelled as geometry: MuJoCo has no
+           equivalent of the fdir1 the competition's Gazebo build uses to point each
+           wheel's friction along its 45-degree roller axis, and only a capsule's
+           anisotropic friction frame follows the geom, which a spinning wheel cannot
+           exploit. BaseVelocityPlugin's traction mode supplies that force analytically
+           from the wheels' measured rotation instead, so the wheel geoms are left
+           near-frictionless: they carry the robot's weight and collide with the world,
+           but they must not also fight the base servo. Geoms are addressed by
+           (mesh, class). -->
       <!-- priority=1 makes the wheel's friction win outright over the floor's
            (default combination is element-wise max, so lowering only the
            wheel would do nothing). -->
-      <modify_element type="geom" mesh="wheel_link" class="collision" friction="0.05 0.001 0.0001" priority="1"/>
-      <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="0.05 0.001 0.0001" priority="1"/>
+      <modify_element type="geom" mesh="wheel_link" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
+      <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
+{wheel_dynamics}
       <!-- Rubber pad on paper ~1.2; torsional/rolling let the pinch resist
            the book pivoting about the grasp axis (active because the book
            is condim 6 and pair condim/friction take the max). -->
@@ -414,11 +525,12 @@ def main():
     src = get_package_share_directory('erc_description') + '/urdf/tiago_pro.urdf'
     urdf = open(src).read()
 
-    fovy = head_camera_fovy()
+    cam_w, cam_h, fovy = head_camera_optics(urdf)
 
     urdf = strip_gazebo_blocks(urdf)
     urdf = strip_transmissions(urdf)
     urdf = strip_laser_housings(urdf)
+    urdf = command_wheels(urdf)
 
     hardware = f'''<plugin>mujoco_ros2_control/MujocoSystemInterface</plugin>
       <param name="mujoco_model_topic">/mujoco_robot_description</param>
@@ -444,7 +556,8 @@ def main():
                      f'    </sensor>\n')
         urdf = urdf.replace('</ros2_control>', imu_iface + '  </ros2_control>', 1)
 
-    inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw, fovy)
+    inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw,
+                                 cam_w, cam_h, fovy)
     urdf = urdf.replace('</robot>', inputs + '</robot>', 1)
 
     with open(args.output, 'w') as f:

@@ -17,6 +17,7 @@
 #include <cmath>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <pluginlib/class_list_macros.hpp>
 
@@ -93,7 +94,59 @@ bool BaseVelocityPlugin::init(rclcpp::Node::SharedPtr node, const mjModel* model
   // does not opt in behaves exactly as upstream does.
   hold_pose_on_idle_ = declareOrGetParameter<bool>(node_, "hold_pose_on_idle", false);
 
-  if (use_stamped_twist)
+  const std::string drive_mode = declareOrGetParameter<std::string>(node_, "drive_mode", "kinematic");
+  if (drive_mode != "kinematic" && drive_mode != "traction")
+  {
+    RCLCPP_ERROR(logger_, "drive_mode must be 'kinematic' or 'traction', got '%s'.", drive_mode.c_str());
+    return false;
+  }
+  traction_mode_ = (drive_mode == "traction");
+  if (traction_mode_)
+  {
+    // Order matters: front-left, front-right, rear-left, rear-right, matching the
+    // mecanum kinematics below.
+    const std::vector<std::string> wheel_joints =
+        declareOrGetParameter<std::vector<std::string>>(node_, "wheel_joints", {});
+    if (wheel_joints.size() != wheel_dof_adr_.size())
+    {
+      RCLCPP_ERROR(logger_, "drive_mode 'traction' needs exactly %zu wheel_joints (front-left, front-right, "
+                            "rear-left, rear-right), got %zu.",
+                   wheel_dof_adr_.size(), wheel_joints.size());
+      return false;
+    }
+    for (size_t i = 0; i < wheel_joints.size(); ++i)
+    {
+      const int jid = mj_name2id(model_, mjOBJ_JOINT, wheel_joints[i].c_str());
+      if (jid < 0 || model_->jnt_type[jid] != mjJNT_HINGE)
+      {
+        RCLCPP_ERROR(logger_, "Wheel joint '%s' is not a hinge joint in the MuJoCo model.",
+                     wheel_joints[i].c_str());
+        return false;
+      }
+      wheel_dof_adr_[i] = model_->jnt_dofadr[jid];
+    }
+    wheel_radius_ = declareOrGetParameter<double>(node_, "wheel_radius", 0.0);
+    wheel_lever_ = declareOrGetParameter<double>(node_, "wheel_lever", 0.0);
+    if (wheel_radius_ <= 0.0 || wheel_lever_ <= 0.0)
+    {
+      RCLCPP_ERROR(logger_, "drive_mode 'traction' needs positive wheel_radius and wheel_lever "
+                            "(got %.4f, %.4f).",
+                   wheel_radius_, wheel_lever_);
+      return false;
+    }
+    settling_time_ = declareOrGetParameter<double>(node_, "settling_time", settling_time_);
+    max_force_ = declareOrGetParameter<double>(node_, "max_force", max_force_);
+    max_torque_ = declareOrGetParameter<double>(node_, "max_torque", max_torque_);
+    max_hold_offset_ = declareOrGetParameter<double>(node_, "max_hold_offset", max_hold_offset_);
+  }
+
+  // Traction mode takes no command: the wheels are commanded through ros2_control
+  // and the base only follows them, so there is nothing for a subscription to feed.
+  if (traction_mode_)
+  {
+    // nothing to subscribe to
+  }
+  else if (use_stamped_twist)
   {
     twist_stamped_sub_ = node_->create_subscription<geometry_msgs::msg::TwistStamped>(
         cmd_vel_topic, rclcpp::SystemDefaultsQoS(),
@@ -107,11 +160,22 @@ bool BaseVelocityPlugin::init(rclcpp::Node::SharedPtr node, const mjModel* model
                                                                        });
   }
 
-  RCLCPP_INFO(logger_,
-              "BaseVelocityPlugin initialised for body '%s'. Listening for %s on '%s'. "
-              "max_linear_velocity=%.2f max_yaw_rate=%.2f cmd_timeout=%.2fs",
-              body_name.c_str(), use_stamped_twist ? "TwistStamped" : "Twist", cmd_vel_topic.c_str(),
-              max_linear_velocity_, max_yaw_rate_, cmd_timeout_sec);
+  if (traction_mode_)
+  {
+    RCLCPP_INFO(logger_,
+                "BaseVelocityPlugin initialised for body '%s' in traction mode: driven by its own "
+                "wheels, radius=%.4f m lever=%.4f m settling_time=%.3f s max_force=%.1f N "
+                "max_torque=%.1f Nm",
+                body_name.c_str(), wheel_radius_, wheel_lever_, settling_time_, max_force_, max_torque_);
+  }
+  else
+  {
+    RCLCPP_INFO(logger_,
+                "BaseVelocityPlugin initialised for body '%s' in kinematic mode. Listening for %s on "
+                "'%s'. max_linear_velocity=%.2f max_yaw_rate=%.2f cmd_timeout=%.2fs",
+                body_name.c_str(), use_stamped_twist ? "TwistStamped" : "Twist", cmd_vel_topic.c_str(),
+                max_linear_velocity_, max_yaw_rate_, cmd_timeout_sec);
+  }
 
   return true;
 }
@@ -133,6 +197,87 @@ void BaseVelocityPlugin::storeCommand(double vx, double vy, double wz)
 }
 
 void BaseVelocityPlugin::pre_step(mjData* data)
+{
+  if (traction_mode_)
+  {
+    driveTraction(data);
+    return;
+  }
+  driveKinematic(data);
+}
+
+// Servo the base towards the twist its own wheels are turning at, with a force cap.
+//
+// The wheels are commanded through ros2_control like any other joint, so what they are
+// actually doing already accounts for their own torque limit and for whatever the
+// controller asked of them. Converting their measured speeds back to a body twist and
+// then chasing that twist with a limited force is the whole traction model: the base
+// cannot exceed what the wheels could push, so an obstacle stalls it, and the wheels
+// keep turning against it exactly as they would on the real robot.
+void BaseVelocityPlugin::driveTraction(mjData* data)
+{
+  // Mecanum forward kinematics, the transpose of the inverse kinematics
+  // mecanum_drive_controller uses, with wheels ordered FL, FR, RL, RR.
+  const double fl = data->qvel[wheel_dof_adr_[0]];
+  const double fr = data->qvel[wheel_dof_adr_[1]];
+  const double rl = data->qvel[wheel_dof_adr_[2]];
+  const double rr = data->qvel[wheel_dof_adr_[3]];
+  const double vx = (fl + fr + rl + rr) * wheel_radius_ / 4.0;
+  const double vy = (-fl + fr + rl - rr) * wheel_radius_ / 4.0;
+  const double wz = (-fl + fr - rl + rr) * wheel_radius_ / (4.0 * wheel_lever_);
+
+  // A free joint's linear qvel is world-frame, so rotate the body-frame twist out;
+  // its angular qvel is already body-frame, which is what wz is.
+  const mjtNum* xmat = data->xmat + body_id_ * 9;
+  const double vx_world = xmat[0] * vx + xmat[1] * vy;
+  const double vy_world = xmat[3] * vx + xmat[4] * vy;
+
+  // Gain = effective inertia / settling time. mjData::qM is stored sparsely with each
+  // row's diagonal entry first, so qM[dof_Madr[i]] is M(i,i) -- the base's own mass and
+  // yaw inertia including everything mounted on it, refreshed as the arms move.
+  const double m_x = data->qM[model_->dof_Madr[qvel_adr_ + 0]];
+  const double m_y = data->qM[model_->dof_Madr[qvel_adr_ + 1]];
+  const double i_z = data->qM[model_->dof_Madr[qvel_adr_ + 5]];
+
+  // A velocity servo alone leaks position: a disturbance the wheels never saw --
+  // an arm accelerating -- pushes the base until the servo's damping cancels it,
+  // and the displacement is never recovered. Measured, that let the idle base
+  // wander 77 mm and 40 degrees over one arm cycle, which is exactly the drift
+  // the old idle-pose latch existed to hide. Integrate the velocity error into a
+  // bounded position offset and add a spring on it, so the base is held where its
+  // wheels put it. The bound is what keeps this from winding up: against a real
+  // obstacle the offset saturates within a few millimetres, the force stays at its
+  // cap, and nothing is stored up to lurch forward with when the obstacle clears.
+  const double dt = model_->opt.timestep;
+  const double ex = vx_world - data->qvel[qvel_adr_ + 0];
+  const double ey = vy_world - data->qvel[qvel_adr_ + 1];
+  const double ez = wz - data->qvel[qvel_adr_ + 5];
+  hold_offset_[0] = mju_clip(hold_offset_[0] + ex * dt, -max_hold_offset_, max_hold_offset_);
+  hold_offset_[1] = mju_clip(hold_offset_[1] + ey * dt, -max_hold_offset_, max_hold_offset_);
+  hold_offset_[2] = mju_clip(hold_offset_[2] + ez * dt, -max_hold_offset_, max_hold_offset_);
+
+  // Critically damped: gain kd = M/tau on the velocity error, kp = M/tau^2 on the
+  // offset.
+  const double kd = 1.0 / settling_time_;
+  const double kp = kd / settling_time_;
+  const double fx = m_x * (kd * ex + kp * hold_offset_[0]);
+  const double fy = m_y * (kd * ey + kp * hold_offset_[1]);
+  const double tz = i_z * (kd * ez + kp * hold_offset_[2]);
+
+  // Cap the planar force as a vector so a diagonal push is not stronger than a
+  // straight one.
+  double scale = 1.0;
+  const double planar = std::hypot(fx, fy);
+  if (planar > max_force_)
+  {
+    scale = max_force_ / planar;
+  }
+  data->qfrc_applied[qvel_adr_ + 0] = fx * scale;
+  data->qfrc_applied[qvel_adr_ + 1] = fy * scale;
+  data->qfrc_applied[qvel_adr_ + 5] = mju_clip(tz, -max_torque_, max_torque_);
+}
+
+void BaseVelocityPlugin::driveKinematic(mjData* data)
 {
   // Step 1 - refresh the cached command from the subscription callback without
   // blocking the real-time thread; if the lock is contended, keep using the last

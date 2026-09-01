@@ -2,7 +2,8 @@
 Competition simulation.
 
 Brings up the arena and the robot on MuJoCo: the controllers from
-controller_params.yaml, /cmd_vel driving the omni base, /joint_states from
+controller_params.yaml, /cmd_vel driving the omni base through
+mecanum_drive_controller and the four wheels, /joint_states from
 joint_state_broadcaster, the head RealSense on the competition topic names,
 and the ERC_SEED-driven arena layout.
 
@@ -158,6 +159,18 @@ def launch_setup(context, *args, **kwargs):
         parameters=[{'use_sim_time': True}],
     )
 
+    # mecanum_drive_controller listens on its own private reference topic; the
+    # competition drives the base on /cmd_vel. It reads Twist rather than
+    # TwistStamped because controller_params.yaml sets use_stamped_vel: false.
+    cmd_vel_relay = Node(
+        package='topic_tools',
+        executable='relay',
+        name='cmd_vel_relay',
+        arguments=['/cmd_vel',
+                   '/mecanum_drive_controller/reference_unstamped'],
+        parameters=[{'use_sim_time': True}],
+    )
+
     # IMUSensorBroadcaster publishes on its own private topic; the competition
     # exposes the base IMU as /base_imu.
     imu_relay = Node(
@@ -186,6 +199,7 @@ def launch_setup(context, *args, **kwargs):
     controllers = TimerAction(period=5.0, actions=[
         spawner('joint_state_broadcaster'),
         spawner('imu_sensor_broadcaster', controller_params),
+        spawner('mecanum_drive_controller', controller_params),
         spawner('arm_left_controller', controller_params),
         spawner('arm_right_controller', controller_params),
         spawner('head_controller', controller_params),
@@ -225,7 +239,8 @@ def launch_setup(context, *args, **kwargs):
     # matches - which showed up as depth_to_cloud silently never receiving
     # camera_info and publishing no cloud at all. Start them once their inputs
     # are real.
-    relays = TimerAction(period=8.0, actions=[depth_info_relay, imu_relay])
+    relays = TimerAction(period=8.0, actions=[depth_info_relay, imu_relay,
+                                              cmd_vel_relay])
 
     return [rsp, converter, control, relays, odom_relay,
             controllers, gripper_clamp, *depth_cloud]

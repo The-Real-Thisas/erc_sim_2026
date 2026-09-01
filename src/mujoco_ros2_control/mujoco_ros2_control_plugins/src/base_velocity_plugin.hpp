@@ -15,9 +15,11 @@
 #ifndef MUJOCO_ROS2_CONTROL_PLUGINS__BASE_VELOCITY_PLUGIN_HPP_
 #define MUJOCO_ROS2_CONTROL_PLUGINS__BASE_VELOCITY_PLUGIN_HPP_
 
+#include <array>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -29,9 +31,26 @@ namespace mujoco_ros2_control_plugins
 {
 
 /**
- * @brief Drives a mobile/floating-base robot from a commanded planar body velocity
- *        (vx, vy, yaw-rate) by writing a hard kinematic override of the base's free-joint
- *        velocity directly into data->qvel every cycle.
+ * @brief Drives a mobile/floating-base robot's planar DOFs, either kinematically from a
+ *        commanded body velocity or dynamically from the rotation of its own wheels.
+ *
+ * Two drive modes, selected by the "drive_mode" parameter:
+ *
+ * "kinematic" (default) writes a hard override of the base's free-joint velocity into
+ * data->qvel every cycle. See below.
+ *
+ * "traction" instead reads the four mecanum wheel joints' measured velocities, converts
+ * them to a body twist with the mecanum forward kinematics, and drives the base towards
+ * that twist with a force-limited velocity servo written into data->qfrc_applied. The
+ * base is then moved by whatever the wheels are actually doing rather than by a
+ * command, so it can be resisted: the servo force is capped at the traction the wheels
+ * could develop (wheel count x wheel effort limit / wheel radius), so driving into an
+ * obstacle stalls the base while the wheels keep turning -- which is what makes wheel
+ * odometry drift. Nothing external is overridden, so contacts and reaction torques act
+ * on the base normally, and a zero wheel speed actively damps the base to rest rather
+ * than needing a pose latch. Requires "wheel_joints", "wheel_radius" and "wheel_lever".
+ *
+ * The kinematic mode, kept as the default so existing models are unaffected:
  *
  * Wheel-terrain friction/slip modelling is often unreliable enough to make it a poor
  * foundation for testing navigation stacks. This plugin instead subscribes to a
@@ -55,6 +74,7 @@ namespace mujoco_ros2_control_plugins
  *   body                (string, required) - MJCF body name of the base. Must have a
  *                        <freejoint/>; init() fails otherwise, since there is no qvel to
  *                        override without one.
+ *   drive_mode          (string, default "kinematic") - "kinematic" or "traction".
  *   cmd_vel_topic       (string, default "cmd_vel")   - command topic name.
  *   use_stamped_twist   (bool,   default false)       - subscribe to
  *                        geometry_msgs/TwistStamped instead of geometry_msgs/Twist.
@@ -63,6 +83,25 @@ namespace mujoco_ros2_control_plugins
  *   max_yaw_rate        (double, default +inf) - clamps the commanded yaw-rate [rad/s].
  *   cmd_timeout         (double, default 0.5)  - seconds since the last command after
  *                        which it is treated as zero (safety stop).
+ *
+ * Traction-mode parameters (ignored in kinematic mode)
+ * -------------------------------------------------------------------------------
+ *   wheel_joints        (string[], required) - the four mecanum wheel joint names, in
+ *                        the order front-left, front-right, rear-left, rear-right.
+ *   wheel_radius        (double, required)   - wheel radius [m].
+ *   wheel_lever         (double, required)   - lx + ly, the mecanum yaw lever arm [m]:
+ *                        the same quantity mecanum_drive_controller calls
+ *                        kinematics.sum_of_robot_center_projection_on_X_Y_axis.
+ *   settling_time       (double, default 0.02) - servo time constant [s]. The
+ *                        servo gain is the base's own effective inertia divided by this,
+ *                        read fresh from the mass matrix each step, so it stays critically
+ *                        tuned as the torso lifts and the arms move.
+ *   max_force           (double, default +inf) - planar force cap [N].
+ *   max_torque          (double, default +inf) - yaw torque cap [Nm].
+ *   max_hold_offset     (double, default 0.02) - bound on the integrated position
+ *                        error the servo will try to recover [m and rad]. Small
+ *                        enough that the force is already at its cap well inside
+ *                        it, so it holds station without winding up.
  */
 class BaseVelocityPlugin : public MuJoCoROS2ControlPluginBase
 {
@@ -75,6 +114,11 @@ public:
   void cleanup() override;
 
 private:
+  /// Kinematic mode: overwrite the free joint's planar qvel with the command.
+  void driveKinematic(mjData* data);
+  /// Traction mode: servo the base towards the twist its wheels are turning at.
+  void driveTraction(mjData* data);
+
   void twistCallback(const geometry_msgs::msg::Twist& msg);
   void twistStampedCallback(const geometry_msgs::msg::TwistStamped& msg);
   void storeCommand(double vx, double vy, double wz);
@@ -90,6 +134,19 @@ private:
   int body_id_{ -1 };
   int qvel_adr_{ -1 };
   int qpos_adr_{ -1 };
+
+  // Traction mode
+  bool traction_mode_{ false };
+  std::array<int, 4> wheel_dof_adr_{ { -1, -1, -1, -1 } };
+  double wheel_radius_{ 0.0 };
+  double wheel_lever_{ 0.0 };
+  double settling_time_{ 0.02 };
+  double max_force_{ std::numeric_limits<double>::infinity() };
+  double max_torque_{ std::numeric_limits<double>::infinity() };
+  // Bounded integral of the velocity error (x, y in m, yaw in rad): the position
+  // the base owes its wheels. See driveTraction.
+  double hold_offset_[3]{ 0.0, 0.0, 0.0 };
+  double max_hold_offset_{ 0.02 };
 
   // Idle pose latch (see pre_step): restore the free joint pose captured when
   // commands went stale, so articulation reaction torques cannot wander the base.

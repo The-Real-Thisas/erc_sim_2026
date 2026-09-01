@@ -4,14 +4,52 @@
       base_velocity_plugin:
         type: "mujoco_ros2_control_plugins/BaseVelocityPlugin"
         body: "base_footprint"
-        cmd_vel_topic: "/cmd_vel"
-        # Zeroing the base velocity does not hold it still: reaction torques
-        # from an arm accelerating integrate into the free joint each step and
-        # the base wanders. This is a local addition to the vendored plugin
-        # (see README) and is off by default there, so it is opted into here.
-        hold_pose_on_idle: true
+        # The base is moved by its own wheels, not by a velocity override:
+        # mecanum_drive_controller turns /cmd_vel into wheel velocities, and this
+        # plugin turns the wheels' measured rotation back into a force-limited push
+        # on the floating base. The plugin reads no command in this mode and creates
+        # no subscription, so cmd_vel_topic does not apply; hold_pose_on_idle is
+        # unnecessary too, because at rest the servo actively holds the base against
+        # arm reaction torques instead of freezing its pose.
+        drive_mode: "traction"
+        wheel_joints: ["wheel_front_left_joint", "wheel_front_right_joint",
+                       "wheel_rear_left_joint", "wheel_rear_right_joint"]
+        wheel_radius: 0.0762
+        # lx + ly from the measured hub positions (+-0.244, +-0.22317). This is the
+        # same quantity mecanum_drive_controller calls
+        # kinematics.sum_of_robot_center_projection_on_X_Y_axis, and it must match
+        # the value in controller_params.yaml or the two kinematics disagree.
+        wheel_lever: 0.46717
+        # Measured over a 10 s cycle of both arms swinging: at 0.05 s the idle
+        # base wandered 5 degrees, at 0.02 s it wanders 0.2 degrees, and shorter
+        # than that the contact solver starts to ring. max_hold_offset bounds the
+        # position the servo will try to recover, so it holds station without
+        # storing up a lurch when an obstacle clears.
+        settling_time: 0.02
+        max_hold_offset: 0.02
+        # What four wheels at PAL's own 6 Nm effort limit could push: 4 * 6.0 /
+        # 0.0762 = 315 N, and 315 * 0.46717 = 147 Nm about z. Driving into the shelf
+        # saturates these and stalls the base instead of sailing through it.
+        max_force: 315.0
+        max_torque: 147.0
       free_joint_state_publisher:
         type: "mujoco_ros2_control_plugins/FreeJointStatePublisherPlugin"
+      # Contact reporting, on the topics and message type the Gazebo build
+      # published. One instance per watched subtree; the rates are the ones
+      # upstream's sensors ran at.
+      contact_sensor:
+        type: "erc_bringup/ContactSensorPlugin"
+        body: "base_footprint"
+        topic: "/contacts"
+        publish_rate: 30.0
+      # Unlike every other body_names/body parameter here, a body the scene
+      # does not contain is survivable: the sensor watches nothing and reports
+      # nothing, so a custom scene:= without a bin still launches.
+      bin_contact_sensor:
+        type: "erc_bringup/ContactSensorPlugin"
+        body: "erc_collection_bin"
+        topic: "/bin_contacts"
+        publish_rate: 10.0
       # The key must be spelled exactly "mujoco_3d_lidar_plugin": like the
       # camera plugin, it reads its parameters from that hard-coded prefix,
       # not from the key it was loaded under.

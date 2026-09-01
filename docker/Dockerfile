@@ -33,6 +33,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-topic-tools \
     && rm -rf /var/lib/apt/lists/*
 
+# Message definitions only: ros_gz_interfaces carries the Contacts message the
+# contact sensors publish, and depends on nothing from Gazebo (geometry_msgs,
+# std_msgs, rcl_interfaces and the rosidl runtime). Keeping the type means team
+# code written against the Gazebo build's /contacts still compiles and runs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-ros-gz-interfaces \
+    && rm -rf /var/lib/apt/lists/*
+
 # 3. MuJoCo backend
 # mujoco_ros2_control is vendored in src/, so this installs only what building
 # it needs: the MuJoCo library itself, the CMake package both its CMakeLists

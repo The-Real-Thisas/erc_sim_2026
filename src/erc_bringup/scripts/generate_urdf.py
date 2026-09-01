@@ -2,16 +2,17 @@
 """
 Generate the competition URDF for the TIAGo Pro robot.
 
-Calls PAL's xacro with the competition configuration and applies the only
-patch the robot itself needs: the wheels are removed from <ros2_control> as
-commanded joints and re-added as state-only. The result is written to
-erc_description/urdf/tiago_pro.urdf.
+Calls PAL's xacro with the competition configuration and applies the two
+patches the robot itself needs: the wheels are removed from <ros2_control> as
+commanded joints and re-added as state-only, and the head camera is retargeted
+from PAL's stock module to the Intel RealSense D435 the competition robot
+carries. The result is written to erc_description/urdf/tiago_pro.urdf.
 
 This file describes the ROBOT, not the simulator. The MuJoCo-specific
-retarget - hardware plugin, actuators, four-bar loop closures, camera,
-gravity compensation - is applied on top of this by generate_mujoco_urdf.py
-at launch, so this URDF stays the single description both the simulator and
-any real-robot tooling start from.
+retarget - hardware plugin, actuators, four-bar loop closures, camera
+placement, gravity compensation - is applied on top of this by
+generate_mujoco_urdf.py at launch, so this URDF stays the single description
+both the simulator and any real-robot tooling start from.
 
 Run inside the container after building:
     ros2 run erc_bringup generate_urdf.py
@@ -30,8 +31,11 @@ Examples:
 """
 
 import argparse
+import math
 import os
+import re
 import subprocess
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 
@@ -45,6 +49,72 @@ WHEEL_POSITIONS = {'wheel_front_right_joint': 'front_right',
                    'wheel_front_left_joint': 'front_left',
                    'wheel_rear_right_joint': 'rear_right',
                    'wheel_rear_left_joint': 'rear_left'}
+
+# The head camera is an Intel RealSense D435, and this is the ONE place its
+# optics are stated: generate_mujoco_urdf.py reads them back out of the sensor
+# block below rather than carrying a second copy, so what the simulator renders
+# and what the description says cannot drift apart.
+#
+# 640x360 is a native 16:9 D435 depth mode and 87 deg is the datasheet
+# horizontal field of view (~87x56, against the datasheet's 87x58). The clip
+# opens PAL's short 0.3-3.0 m range to the module's own 0.2-8.0 m so the shelf
+# at ~4 m is in range.
+HEAD_CAMERA_LINK = 'head_front_camera_link'
+HEAD_CAMERA_W, HEAD_CAMERA_H = 640, 360
+HEAD_CAMERA_HFOV = 1.5184364492350666    # 87 deg
+HEAD_CAMERA_NEAR, HEAD_CAMERA_FAR = 0.2, 8.0
+
+
+def patch_head_camera(urdf):
+    """Retarget PAL's stock head camera sensors to the competition's D435.
+
+    Rewrites values rather than matching PAL's own, so the result is the same
+    whichever module --camera_model selected. Scoped to the head camera's own
+    <gazebo> block, so a wrist camera added by --has_wrist_camera keeps its.
+    """
+    m = re.search(r'<gazebo reference="' + HEAD_CAMERA_LINK + r'">.*?</gazebo>',
+                  urdf, re.S)
+    if not m:
+        sys.exit(f'ERROR: no <gazebo reference="{HEAD_CAMERA_LINK}"> block to '
+                 f'retarget; the head camera would keep PAL\'s stock optics.')
+
+    # The vertical field of view PAL emits alongside the horizontal one is not
+    # an independent degree of freedom - a pinhole camera has one FoV and an
+    # aspect ratio - so it is derived here rather than stated, and cannot
+    # contradict the numbers above.
+    vfov = 2 * math.atan(math.tan(HEAD_CAMERA_HFOV / 2)
+                         * HEAD_CAMERA_H / HEAD_CAMERA_W)
+
+    # Both head sensors - the colour camera and the RGB-D one - are retargeted
+    # together and stay pixel-aligned, because a depth sample is read at a
+    # colour pixel's coordinates downstream.
+    block = m.group(0)
+    for pattern, repl, expected in (
+        (r'<width>\d+</width>', f'<width>{HEAD_CAMERA_W}</width>', 2),
+        (r'<height>\d+</height>', f'<height>{HEAD_CAMERA_H}</height>', 2),
+        (r'<horizontal_fov>[^<]+</horizontal_fov>',
+         f'<horizontal_fov>{HEAD_CAMERA_HFOV}</horizontal_fov>', 2),
+        (r'<vertical_fov>[^<]+</vertical_fov>',
+         f'<vertical_fov>{vfov}</vertical_fov>', 2),
+        (r'<near>[^<]+</near>', f'<near>{HEAD_CAMERA_NEAR}</near>', 1),
+        (r'<far>[^<]+</far>', f'<far>{HEAD_CAMERA_FAR}</far>', 1),
+        # The rendered image follows the ROS optical convention (Z forward, X
+        # right, Y down), but PAL stamps it with the camera BODY frame. Every
+        # consumer that trusts the header then reads it through the wrong axes:
+        # a point "1 m in front" is placed 1 m up. The optical frames are
+        # already in the description; point the sensors at them.
+        (r'<gz_frame_id>head_front_camera_(color|depth)_frame</gz_frame_id>',
+         r'<gz_frame_id>head_front_camera_\1_optical_frame</gz_frame_id>', 2),
+        # The simulator publishes RGB8; PAL declares the byte order reversed.
+        (r'<format>B8G8R8</format>', '<format>R8G8B8</format>', 2),
+    ):
+        block, n = re.subn(pattern, repl, block)
+        if n != expected:
+            sys.exit(f'ERROR: head camera retarget: {pattern} matched {n} '
+                     f'times, expected {expected}. A half-retargeted camera '
+                     f'renders at optics nothing downstream agrees with.')
+
+    return urdf[:m.start()] + block + urdf[m.end():]
 
 
 def generate_urdf(**xacro_args):
@@ -99,6 +169,9 @@ def generate_urdf(**xacro_args):
             f'    </joint>\n'
         )
     urdf = urdf.replace('</ros2_control>', state_only + '  </ros2_control>', 1)
+
+    # ── Head camera: PAL's stock module -> the competition's D435 ──
+    urdf = patch_head_camera(urdf)
 
     return urdf
 
