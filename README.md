@@ -168,7 +168,7 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `/contacts` | `ros_gz_interfaces/msg/Contacts` | Every contact on the robot — base, torso, head, both arms, both grippers |
 | `/bin_contacts` | `ros_gz_interfaces/msg/Contacts` | Every contact on the collection bin |
 
-**Contacts.** Both topics carry one entry per colliding pair, with the contact points, normals, penetration depths and world-frame wrenches in parallel arrays. `/bin_contacts` is the signal that a book has been placed: a book in the bin shows up as a pair against `bin_floor`. The two collision entities are named the way Gazebo named them — a robot link reports `<link>_collision`, and arena geometry reports its own name (`bin_floor`, `book_col_3_row_4_red_geom`, `erc_shelf_collision_12`). Grasp force is also readable from the `effort` field of `/joint_states`, and object placement from `/model_states`. The base's own contacts are reported, but remember it is driven kinematically: nothing it bumps into slows it down.
+**Contacts.** Both topics carry one entry per colliding pair, with the contact points, normals, penetration depths and world-frame wrenches in parallel arrays. `/bin_contacts` is the signal that a book has been placed: a book in the bin shows up as a pair against `bin_floor`. The two collision entities are named the way Gazebo named them — a robot link reports `<link>_collision`, and arena geometry reports its own name (`bin_floor`, `book_col_3_row_4_red_geom`, `erc_shelf_collision_12`). Grasp force is also readable from the `effort` field of `/joint_states`, and object placement from `/model_states`. The base's own contacts are reported, and unlike the old kinematic drive they do slow it down — see **Mobile base** above.
 
 ### Sensor specifications
 
@@ -213,7 +213,9 @@ ros2 topic pub --once /torso_controller/joint_trajectory trajectory_msgs/msg/Joi
 | `pal_sea_arm` | https://github.com/pal-robotics/pal_sea_arm | `humble-devel` |
 | `tiago_pro_head_robot` | https://github.com/pal-robotics/tiago_pro_head_robot | `humble-devel` |
 | `omni_base_robot` | https://github.com/pal-robotics/omni_base_robot | `humble-devel` |
-| `mujoco_ros2_control` | https://github.com/pal-robotics-forks/mujoco_ros2_control | `main` |
+| `mujoco_ros2_control` | https://github.com/pal-robotics-forks/mujoco_ros2_control | `main` (two local patches, see below) |
+
+`mujoco_ros2_control` is vendored with two patches to `BaseVelocityPlugin`, both of which apply to the base and neither of which changes its default behaviour: `hold_pose_on_idle`, which latches the pose of an idle kinematically-driven base so articulation reaction torques cannot wander it, and `drive_mode: traction`, which is what this simulator actually runs — the base is servoed from the measured rotation of its wheels with a force cap instead of having a velocity written into it. `drive_mode` defaults to `kinematic`, so an existing configuration behaves exactly as it did upstream.
 
 ## URDF generation
 

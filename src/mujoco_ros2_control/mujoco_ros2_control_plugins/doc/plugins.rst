@@ -300,12 +300,14 @@ is exactly the commanded velocity on the very next simulation step.
 
 .. warning::
 
-   Because the override is kinematic, it outranks MuJoCo's contact solver. **Colliding with a
-   wall or obstacle will not slow the base down** on the driven axes — the commanded velocity is
-   reasserted every cycle regardless of what any contact computed in between. If you need
-   physically realistic collision response while driving the base, this plugin is not the right
-   tool; the trade-off it makes is exact, disturbance-immune velocity tracking in exchange for
-   giving up momentum-conserving contacts on the driven DOFs.
+   This applies to ``drive_mode: kinematic``, the default. Because the override is kinematic, it
+   outranks MuJoCo's contact solver: **colliding with a wall or obstacle will not slow the base
+   down** on the driven axes — the commanded velocity is reasserted every cycle regardless of
+   what any contact computed in between. The trade-off it makes is exact, disturbance-immune
+   velocity tracking in exchange for giving up momentum-conserving contacts on the driven DOFs.
+   If you need physically realistic collision response while driving the base, use
+   ``drive_mode: traction``, which servos the base from the measured rotation of wheels
+   commanded through ros2_control and applies force rather than velocity, so contact resists it.
 
 Only the planar degrees of freedom are driven: body-frame linear x/y and yaw-rate (about body z).
 Vertical motion and roll/pitch are left entirely to gravity and contacts, so the base settles onto

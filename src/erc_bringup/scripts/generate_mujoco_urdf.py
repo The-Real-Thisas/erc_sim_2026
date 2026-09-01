@@ -211,8 +211,12 @@ def command_wheels(urdf: str) -> str:
         state_only = (f'<joint name="{joint}">\n'
                       f'      <state_interface name="position"/>\n')
         if state_only not in urdf:
-            print(f'note: {joint} is not a state-only <ros2_control> joint; '
-                  f'leaving it alone')
+            if f'name="{joint}"' in urdf:
+                sys.exit(f'ERROR: {joint} is in the description but not as a '
+                         f'state-only <ros2_control> joint, so it cannot be '
+                         f'given a command interface. mecanum_drive_controller '
+                         f'would fail to activate and the base would be dead.')
+            print(f'note: no {joint}; this robot has no wheel there')
             continue
         urdf = urdf.replace(state_only,
                             f'<joint name="{joint}">\n'
@@ -319,14 +323,16 @@ def laser_spec(urdf: str, site: str):
         sys.exit(f'ERROR: {site} carries no gpu_lidar sensor to take a scan '
                  f'specification from')
     text = sensor.group(0)
-    # Scoped to <range> so the scan angles and the noise model cannot be mistaken
-    # for the range bounds.
+    # Each field is read from the element that owns it: a scan can carry a
+    # <vertical> block beside the <horizontal> one, and <range> carries a
+    # <min>/<max> pair that has nothing to do with the scan angles.
     rng = re.search(r'<range>.*?</range>', text, re.S)
+    hor = re.search(r'<horizontal>.*?</horizontal>', text, re.S)
     fields = {}
     for key, source, pattern in (
-            ('samples', text, r'<samples>([^<]+)</samples>'),
-            ('min_angle', text, r'<min_angle>([^<]+)</min_angle>'),
-            ('max_angle', text, r'<max_angle>([^<]+)</max_angle>'),
+            ('samples', hor.group(0) if hor else '', r'<samples>([^<]+)</samples>'),
+            ('min_angle', hor.group(0) if hor else '', r'<min_angle>([^<]+)</min_angle>'),
+            ('max_angle', hor.group(0) if hor else '', r'<max_angle>([^<]+)</max_angle>'),
             ('min_range', rng.group(0) if rng else '', r'<min>([^<]+)</min>'),
             ('max_range', rng.group(0) if rng else '', r'<max>([^<]+)</max>'),
             ('rate', text, r'<update_rate>([^<]+)</update_rate>')):
@@ -362,6 +368,8 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
     # velocity-servoed at PAL's own effort limit, so a stalled base shows up as wheels
     # turning against it -- which is what makes the wheel odometry drift honestly.
     for joint in WHEEL_JOINTS:
+        if f'name="{joint}"' not in urdf:
+            continue
         actuators.append(
             f'        <velocity name="{joint}" joint="{joint}" kv="{WHEEL_KV:g}" '
             f'forcerange="{-WHEEL_EFFORT:g} {WHEEL_EFFORT:g}"/>')
@@ -532,9 +540,9 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; the arena spec starts
-           the robot yawed 90 degrees on the start zone. Do NOT lift it off the
-           floor: the base plugin latches the pose whenever cmd_vel is stale,
-           so a robot spawned in the air would simply stay there. -->
+           the robot yawed 90 degrees on the start zone. Spawn it on the floor:
+           the base is carried by its wheels' contact with the ground, so a
+           robot spawned in the air falls until they reach it. -->
       <modify_element type="body" name="{root_body}" pos="{spawn_xyz}" euler="0 0 {spawn_yaw}"/>
     </processed_inputs>
   </mujoco_inputs>

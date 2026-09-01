@@ -15,7 +15,7 @@ Full documentation is maintained in RST format:
 | `HeartbeatPublisherPlugin` | Publishes a heartbeat string to `/mujoco_heartbeat` at 1 Hz |
 | `CameraPlugin` | Publishes MuJoCo RGB-D camera color/depth/info to ROS 2 topics |
 | `ExternalWrenchPlugin` | Applies external wrenches to MuJoCo bodies via a ROS 2 service |
-| `BaseVelocityPlugin` | Drives a mobile/floating-base robot from a `cmd_vel`-style topic via a direct free-joint velocity override, independent of wheel-ground contact |
+| `BaseVelocityPlugin` | Drives a mobile/floating-base robot: either from a `cmd_vel`-style topic via a direct free-joint velocity override, independent of wheel-ground contact (`drive_mode: kinematic`, default), or by servoing the base with a capped force from the measured rotation of its wheels, so that contact resists it (`drive_mode: traction`) |
 | `FreeJointStatePublisherPlugin` | Publishes the pose/velocity of free-joint bodies to a topic, in a selectable reference frame |
 | `Mujoco3dLidarPlugin` | Republishes MuJoCo lidar-extension sensor data as `LaserScan`/`PointCloud2` messages |
 | `RangefinderLidarPlugin` | **[Deprecated]** Wraps MuJoCo rangefinder sensors as `LaserScan` publishers |

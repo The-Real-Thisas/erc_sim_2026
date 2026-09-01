@@ -135,14 +135,29 @@ bool ContactSensorPlugin::init(rclcpp::Node::SharedPtr node, const mjModel* mode
 void ContactSensorPlugin::update(const mjModel* /*model*/, mjData* data)
 {
   const rclcpp::Time now = node_->get_clock()->now();
+  // Sim time only runs backwards if the simulator is restarted under us; without
+  // this the gate would never open again and the topic would go silent for good.
+  if (now < last_publish_time_)
+  {
+    last_publish_time_ = now;
+  }
   if (now - last_publish_time_ < publish_period_)
   {
     return;
   }
-  last_publish_time_ = now;
+  // Advance by whole periods rather than to `now`, so the rate does not round up
+  // to the next control tick: at 250 Hz, resetting to `now` turns a 30 Hz period
+  // into 9 ticks, i.e. 27.8 Hz. Catch up in one step if publishing fell behind.
+  last_publish_time_ += publish_period_;
+  if (now - last_publish_time_ > publish_period_)
+  {
+    last_publish_time_ = now;
+  }
 
   message_.header.stamp = now;
-  message_.contacts.clear();  // keeps the vector's capacity across publishes
+  // Only the outer vector keeps its capacity; each entry's point arrays are
+  // rebuilt, so a publish still allocates.
+  message_.contacts.clear();
 
   for (int i = 0; i < data->ncon; ++i)
   {

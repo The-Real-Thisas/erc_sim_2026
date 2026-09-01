@@ -39,10 +39,11 @@ import sys
 
 from ament_index_python.packages import get_package_share_directory
 
-# The base is driven as a whole body by the simulator, not through the wheel
-# joints, so nothing should command them. They stay in <ros2_control> as
-# state-only entries purely so joint_state_broadcaster can publish their
-# positions for RViz.
+# The wheels are left state-only here because that is what the competition's
+# Gazebo build wants: there the gz mecanum plugin drives them from outside
+# ros2_control. The MuJoCo retarget gives them a velocity command interface of
+# its own (generate_mujoco_urdf.py, command_wheels), so this file stays the
+# description of the robot rather than of either simulator.
 WHEEL_JOINTS = ('wheel_front_right_joint', 'wheel_front_left_joint',
                 'wheel_rear_right_joint', 'wheel_rear_left_joint')
 WHEEL_POSITIONS = {'wheel_front_right_joint': 'front_right',
@@ -96,23 +97,39 @@ def patch_head_camera(urdf):
          f'<horizontal_fov>{HEAD_CAMERA_HFOV}</horizontal_fov>', 2),
         (r'<vertical_fov>[^<]+</vertical_fov>',
          f'<vertical_fov>{vfov}</vertical_fov>', 2),
-        (r'<near>[^<]+</near>', f'<near>{HEAD_CAMERA_NEAR}</near>', 1),
-        (r'<far>[^<]+</far>', f'<far>{HEAD_CAMERA_FAR}</far>', 1),
         # The rendered image follows the ROS optical convention (Z forward, X
-        # right, Y down), but PAL stamps it with the camera BODY frame. Every
-        # consumer that trusts the header then reads it through the wrong axes:
-        # a point "1 m in front" is placed 1 m up. The optical frames are
-        # already in the description; point the sensors at them.
-        (r'<gz_frame_id>head_front_camera_(color|depth)_frame</gz_frame_id>',
+        # right, Y down), but PAL stamps some modules with the camera BODY
+        # frame. Every consumer that trusts the header then reads it through
+        # the wrong axes: a point "1 m in front" is placed 1 m up. The optical
+        # frames are already in the description; point the sensors at them.
+        # Matched by role, not by PAL's current value, so a module that already
+        # names the optical frame is left correct rather than failing the count.
+        (r'<gz_frame_id>head_front_camera_(color|depth)(?:_optical)?_frame</gz_frame_id>',
          r'<gz_frame_id>head_front_camera_\1_optical_frame</gz_frame_id>', 2),
-        # The simulator publishes RGB8; PAL declares the byte order reversed.
-        (r'<format>B8G8R8</format>', '<format>R8G8B8</format>', 2),
+        # The simulator publishes RGB8, whatever byte order the module declares.
+        (r'<format>[^<]+</format>', '<format>R8G8B8</format>', 2),
     ):
         block, n = re.subn(pattern, repl, block)
         if n != expected:
             sys.exit(f'ERROR: head camera retarget: {pattern} matched {n} '
                      f'times, expected {expected}. A half-retargeted camera '
                      f'renders at optics nothing downstream agrees with.')
+
+    # The range clip is the depth sensor's alone. Scoped to <depth_camera>
+    # because some modules put a <clip> on the colour camera as well, where it
+    # means the render distance rather than the sensing range.
+    depth = re.search(r'<depth_camera>.*?</depth_camera>', block, re.S)
+    if not depth:
+        sys.exit('ERROR: head camera retarget: no <depth_camera> to give a '
+                 'sensing range to; this module has no depth sensor.')
+    clipped = depth.group(0)
+    for pattern, repl in ((r'<near>[^<]+</near>', f'<near>{HEAD_CAMERA_NEAR}</near>'),
+                          (r'<far>[^<]+</far>', f'<far>{HEAD_CAMERA_FAR}</far>')):
+        clipped, n = re.subn(pattern, repl, clipped)
+        if n != 1:
+            sys.exit(f'ERROR: head camera retarget: {pattern} matched {n} '
+                     f'times inside <depth_camera>, expected 1.')
+    block = block[:depth.start()] + clipped + block[depth.end():]
 
     return urdf[:m.start()] + block + urdf[m.end():]
 

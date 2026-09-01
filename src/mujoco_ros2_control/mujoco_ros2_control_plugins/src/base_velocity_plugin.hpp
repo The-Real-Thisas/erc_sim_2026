@@ -147,6 +147,9 @@ private:
   // the base owes its wheels. See driveTraction.
   double hold_offset_[3]{ 0.0, 0.0, 0.0 };
   double max_hold_offset_{ 0.02 };
+  // Previous step's base position, so traction mode can tell a teleport from motion.
+  bool have_last_qpos_{ false };
+  mjtNum last_qpos_[3]{ 0, 0, 0 };
 
   // Idle pose latch (see pre_step): restore the free joint pose captured when
   // commands went stale, so articulation reaction torques cannot wander the base.

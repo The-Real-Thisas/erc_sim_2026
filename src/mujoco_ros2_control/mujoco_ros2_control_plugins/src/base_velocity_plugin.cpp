@@ -138,6 +138,17 @@ bool BaseVelocityPlugin::init(rclcpp::Node::SharedPtr node, const mjModel* model
     max_force_ = declareOrGetParameter<double>(node_, "max_force", max_force_);
     max_torque_ = declareOrGetParameter<double>(node_, "max_torque", max_torque_);
     max_hold_offset_ = declareOrGetParameter<double>(node_, "max_hold_offset", max_hold_offset_);
+    // settling_time divides into the servo gains, so zero produces infinite force
+    // and a negative one drives the base away from its target instead of towards
+    // it. A negative bound would make mju_clip's min exceed its max, which pins
+    // the offset at the bound and holds the servo at full force forever.
+    if (settling_time_ <= 0.0 || max_force_ <= 0.0 || max_torque_ <= 0.0 || max_hold_offset_ < 0.0)
+    {
+      RCLCPP_ERROR(logger_, "drive_mode 'traction' needs settling_time > 0, max_force > 0, "
+                            "max_torque > 0 and max_hold_offset >= 0 (got %.4f, %.1f, %.1f, %.4f).",
+                   settling_time_, max_force_, max_torque_, max_hold_offset_);
+      return false;
+    }
   }
 
   // Traction mode takes no command: the wheels are commanded through ros2_control
@@ -216,6 +227,25 @@ void BaseVelocityPlugin::pre_step(mjData* data)
 // keep turning against it exactly as they would on the real robot.
 void BaseVelocityPlugin::driveTraction(mjData* data)
 {
+  // An external teleport (reset_world, set_free_joint_state) is not something the
+  // wheels did, so the stored offset it leaves behind describes a position the base
+  // no longer has. Drop it, or the servo spends the next moments pushing towards
+  // where the robot used to be. The base itself never moves this far in one step:
+  // 5 mm at the competition's 2 ms timestep would be 2.5 m/s.
+  for (int k = 0; k < 3; ++k)
+  {
+    if (have_last_qpos_ && std::abs(data->qpos[qpos_adr_ + k] - last_qpos_[k]) > 0.005)
+    {
+      hold_offset_[0] = hold_offset_[1] = hold_offset_[2] = 0.0;
+      break;
+    }
+  }
+  for (int k = 0; k < 3; ++k)
+  {
+    last_qpos_[k] = data->qpos[qpos_adr_ + k];
+  }
+  have_last_qpos_ = true;
+
   // Mecanum forward kinematics, the transpose of the inverse kinematics
   // mecanum_drive_controller uses, with wheels ordered FL, FR, RL, RR.
   const double fl = data->qvel[wheel_dof_adr_[0]];
@@ -246,8 +276,10 @@ void BaseVelocityPlugin::driveTraction(mjData* data)
   // the old idle-pose latch existed to hide. Integrate the velocity error into a
   // bounded position offset and add a spring on it, so the base is held where its
   // wheels put it. The bound is what keeps this from winding up: against a real
-  // obstacle the offset saturates within a few millimetres, the force stays at its
-  // cap, and nothing is stored up to lurch forward with when the obstacle clears.
+  // obstacle the offset saturates, the force stays at its cap, and what is stored
+  // up is limited to max_hold_offset. That much does discharge when the command
+  // stops -- measured, driving into a wall and then commanding zero pushed a
+  // further 21 mm over about a second before settling -- so keep the bound small.
   const double dt = model_->opt.timestep;
   const double ex = vx_world - data->qvel[qvel_adr_ + 0];
   const double ey = vy_world - data->qvel[qvel_adr_ + 1];
