@@ -131,16 +131,10 @@ LASERS = (
     ('scan_front_raw', 'base_front_laser_link'),
     ('scan_rear_raw', 'base_rear_laser_link'),
 )
-# These are hand-copied from the <gazebo><sensor type="gpu_lidar"> blocks that
-# strip_gazebo_blocks deletes below, so nothing can cross-check them at runtime.
-# They match the shipped description char-for-char today; if PAL changes the
-# scanner spec, this is where it has to be changed too.
-LASER_SAMPLES = 818
-LASER_MIN_ANGLE = -2.3387411976724017
-LASER_MAX_ANGLE = 2.356194490192345
-LASER_MIN_RANGE = 0.05
-LASER_MAX_RANGE = 25.0
-LASER_RATE = 10.0
+# Each scanner's specification is defined once, in the robot description's own
+# gpu_lidar sensor block, and read back out by laser_spec() before
+# strip_gazebo_blocks deletes it - the same contract the head camera uses - so a
+# simulated scan cannot drift from the one the shipped URDF describes.
 
 # The base IMU. mujoco_ros2_control builds a ros2_control IMU sensor out of
 # three MJCF sensors whose names share a base and take these suffixes, and
@@ -310,8 +304,45 @@ def head_camera_optics(urdf: str):
     return w, h, math.degrees(2 * math.atan(math.tan(hfov / 2) * h / w))
 
 
+def laser_spec(urdf: str, site: str):
+    """(samples, min_angle, max_angle, min_range, max_range, rate) from the description.
+
+    Read from the scanner's own <gazebo> sensor block, so the rays MuJoCo casts
+    are the ones the URDF declares rather than a second copy of them.
+    """
+    block = re.search(r'<gazebo reference="' + site + r'">.*?</gazebo>', urdf, re.S)
+    if not block:
+        sys.exit(f'ERROR: no <gazebo reference="{site}"> in the URDF, so the '
+                 f'scanner on {site} has no specification to take')
+    sensor = re.search(r'<sensor [^>]*type="gpu_lidar".*?</sensor>', block.group(0), re.S)
+    if not sensor:
+        sys.exit(f'ERROR: {site} carries no gpu_lidar sensor to take a scan '
+                 f'specification from')
+    text = sensor.group(0)
+    # Scoped to <range> so the scan angles and the noise model cannot be mistaken
+    # for the range bounds.
+    rng = re.search(r'<range>.*?</range>', text, re.S)
+    fields = {}
+    for key, source, pattern in (
+            ('samples', text, r'<samples>([^<]+)</samples>'),
+            ('min_angle', text, r'<min_angle>([^<]+)</min_angle>'),
+            ('max_angle', text, r'<max_angle>([^<]+)</max_angle>'),
+            ('min_range', rng.group(0) if rng else '', r'<min>([^<]+)</min>'),
+            ('max_range', rng.group(0) if rng else '', r'<max>([^<]+)</max>'),
+            ('rate', text, r'<update_rate>([^<]+)</update_rate>')):
+        m = re.search(pattern, source)
+        if not m:
+            sys.exit(f'ERROR: the scanner on {site} declares no {key}; a scan '
+                     f'cast from a half-read specification is not the one the '
+                     f'description asks for')
+        fields[key] = float(m.group(1))
+    return (int(fields['samples']), fields['min_angle'], fields['max_angle'],
+            fields['min_range'], fields['max_range'], fields['rate'])
+
+
 def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
-                        cam_w: int, cam_h: int, fovy: float) -> str:
+                        cam_w: int, cam_h: int, fovy: float,
+                        laser_specs: dict) -> str:
     lims = joint_limits(urdf)
     root_body = root_link(urdf)
     actuators = []
@@ -376,15 +407,16 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
         if f'name="{site}"' not in urdf:
             print(f'WARNING: {site} not in URDF, skipping {name}')
             continue
+        samples, min_angle, max_angle, min_range, max_range, rate = laser_specs[site]
         lidar_instances.append(
             f'          <instance name="{name}">\n'
-            f'            <config key="resolution" value="{LASER_SAMPLES} 1"/>\n'
+            f'            <config key="resolution" value="{samples} 1"/>\n'
             f'            <config key="azimuth_range" '
-            f'value="{LASER_MIN_ANGLE:.10g} {LASER_MAX_ANGLE:.10g}"/>\n'
+            f'value="{min_angle:.10g} {max_angle:.10g}"/>\n'
             f'            <config key="elevation_range" value="0.0"/>\n'
-            f'            <config key="min_range" value="{LASER_MIN_RANGE:g}"/>\n'
-            f'            <config key="max_range" value="{LASER_MAX_RANGE:g}"/>\n'
-            f'            <config key="update_rate" value="{LASER_RATE:g}"/>\n'
+            f'            <config key="min_range" value="{min_range:g}"/>\n'
+            f'            <config key="max_range" value="{max_range:g}"/>\n'
+            f'            <config key="update_rate" value="{rate:g}"/>\n'
             f'            <config key="async" value="0"/>\n'
             f'          </instance>')
         sensors.append(
@@ -526,6 +558,9 @@ def main():
     urdf = open(src).read()
 
     cam_w, cam_h, fovy = head_camera_optics(urdf)
+    # Both readers have to run before strip_gazebo_blocks deletes their source.
+    laser_specs = {site: laser_spec(urdf, site)
+                   for _, site in LASERS if f'name="{site}"' in urdf}
 
     urdf = strip_gazebo_blocks(urdf)
     urdf = strip_transmissions(urdf)
@@ -557,7 +592,7 @@ def main():
         urdf = urdf.replace('</ros2_control>', imu_iface + '  </ros2_control>', 1)
 
     inputs = build_mujoco_inputs(urdf, args.spawn_xyz, args.spawn_yaw,
-                                 cam_w, cam_h, fovy)
+                                 cam_w, cam_h, fovy, laser_specs)
     urdf = urdf.replace('</robot>', inputs + '</robot>', 1)
 
     with open(args.output, 'w') as f:
