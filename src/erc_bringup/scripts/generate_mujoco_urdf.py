@@ -478,8 +478,14 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
            contact point - each fingertip touched the book at exactly one
            point (free pivot in the grasp), and the flat book tunnelled
            10 mm into the bin's thin coacd floor sheets (measured
-           2026-08-26). -->
-      <option integrator="implicitfast" cone="elliptic" impratio="10">
+           2026-08-26).
+           noslip: the soft-contact solver lets a loaded contact drift along
+           its friction directions. A book pinched at 10 N per pad with its
+           centre 37 mm behind the pinch axis turned in the pads at about a
+           degree a second and fell out after 70 s; a real book does not
+           turn in a hand that holds it. With the noslip post-processor the
+           same hold drifts 0.3 deg in four minutes (measured 2026-09-05). -->
+      <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5">
         <flag multiccd="enable"/>
       </option>
       <!-- znear is a fraction of the scene's statistic extent (~2 m), so 0.1

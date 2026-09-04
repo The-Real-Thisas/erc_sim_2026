@@ -273,7 +273,7 @@ def build_world(share, seed=None):
        appended after the scene). They are here so the arena is also correct
        when loaded on its own: under the Euler/pyramidal defaults a resting
        book sinks 6.4 mm into a shelf, against 0.1 mm with these. -->
-  <option integrator="implicitfast" cone="elliptic" impratio="10">
+  <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5">
     <flag multiccd="enable"/>
   </option>
 
