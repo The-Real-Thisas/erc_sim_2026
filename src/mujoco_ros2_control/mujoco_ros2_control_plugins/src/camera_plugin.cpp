@@ -95,8 +95,9 @@ void CameraPlugin::update(const mjModel* model_arg, mjData* data)
     // A streaming camera nobody listens to is not rendered at all: the render and the
     // mjData snapshot it needs are the plugin's whole cost, and the interval is in
     // simulated time, so at several times real time an unwatched camera would otherwise
-    // eat a core for frames that are dropped. The camera_info rides along with the
-    // frames it calibrates, so it is not published on its own either.
+    // eat a core for frames that are dropped. Its camera_info still goes out on every
+    // tick to whoever listens for it, as a camera driver's does: the calibration costs
+    // nothing and a consumer may read it before it asks for frames.
     for (auto& camera : cameras_)
     {
       if (camera.policy == CameraPolicy::STREAMING && stream_due)
@@ -106,6 +107,12 @@ void CameraPlugin::update(const mjModel* model_arg, mjData* data)
         {
           camera.render_pending = true;
           any_selected = true;
+        }
+        else if (camera.camera_info_pub->get_subscription_count() > 0)
+        {
+          auto info = camera.camera_info;
+          info.header.stamp = now;
+          camera.camera_info_pub->publish(info);
         }
       }
       else if (camera.policy == CameraPolicy::POLLED && camera.poll_requested)
@@ -617,14 +624,16 @@ void CameraPlugin::render_and_publish_camera(CameraData& camera, const rclcpp::T
     std::memcpy(&camera.image.data[dest_idx], &camera.image_buffer[src_idx], row_size);
   }
 
-  // Step 3: Publish the images and camera info.
+  // Step 3: Publish the images and camera info. The info is a stamped copy: the
+  // registered one is read by the sim thread too (update) and is never written.
   camera.image.header.stamp = stamp;
   camera.depth_image.header.stamp = stamp;
-  camera.camera_info.header.stamp = stamp;
+  auto info = camera.camera_info;
+  info.header.stamp = stamp;
 
   camera.image_pub->publish(camera.image);
   camera.depth_image_pub->publish(camera.depth_image);
-  camera.camera_info_pub->publish(camera.camera_info);
+  camera.camera_info_pub->publish(info);
 }
 
 void CameraPlugin::handle_trigger(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,

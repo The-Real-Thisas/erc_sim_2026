@@ -1407,7 +1407,8 @@ void MujocoSimulation::physics_loop()
   // goes per step: the plugins before the step, mj_step itself (which also
   // runs the sensor plugins), the publishers after it, and the rest of the
   // loop. This is how the two scanners' rays were found inside mj_step.
-  const bool profile = std::getenv("MUJOCO_STEP_PROFILE") != nullptr;
+  const char* profile_env = std::getenv("MUJOCO_STEP_PROFILE");
+  const bool profile = profile_env != nullptr && std::string(profile_env) != "" && std::string(profile_env) != "0";
   double prof_pre = 0, prof_step = 0, prof_pub = 0, prof_n = 0;
   auto prof_t0 = mj::Simulate::Clock::now();
 
@@ -1522,8 +1523,10 @@ void MujocoSimulation::physics_loop()
             double refreshTime = kSimRefreshFraction / sim_->refresh_rate;
 
             // step while sim lags behind cpu and within refreshTime.
+            // CHANGED FROM UPSTREAM: a burst is many steps, so a model that
+            // diverged mid-burst (run cleared below) is not stepped on.
             auto currentCPU = mj::Simulate::Clock::now();
-            while (Seconds((mj_data_->time - syncSim) * speedFactor) < currentCPU - syncCPU &&
+            while (sim_->run && Seconds((mj_data_->time - syncSim) * speedFactor) < currentCPU - syncCPU &&
                    currentCPU - startCPU < Seconds(refreshTime))
             {
               // measure slowdown before first step
@@ -1601,6 +1604,14 @@ void MujocoSimulation::physics_loop()
               currentCPU = mj::Simulate::Clock::now();
             }
             lagging = Seconds((mj_data_->time - syncSim) * speedFactor) < currentCPU - syncCPU;
+            // CHANGED FROM UPSTREAM: a CPU-bound sim re-syncs every iteration,
+            // so the window above is always empty and the readout would freeze;
+            // the burst itself is then the delivered speed.
+            if (!measured && mj_data_->time > prevSim)
+            {
+              sim_->measured_slowdown =
+                  static_cast<float>(Seconds(currentCPU - startCPU).count() / (mj_data_->time - prevSim));
+            }
           }
 
           // save current state to history buffer
