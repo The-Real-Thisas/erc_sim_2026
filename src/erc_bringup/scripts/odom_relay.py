@@ -52,8 +52,10 @@ class OdomRelay(Node):
         self.tf = TransformBroadcaster(self)
         self.static_tf = StaticTransformBroadcaster(self)
         self.pub = self.create_publisher(Odometry, '/odom', 10)
+        # the newest sample: a queue would hand a lagging relay old ones in order
         self.sub = self.create_subscription(
-            Odometry, WHEEL_ODOM_TOPIC, self.cb, 10)
+            Odometry, WHEEL_ODOM_TOPIC, self.cb,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
         # Ground truth, used for one thing only: to find out where the robot was
         # spawned so the world -> odom transform can be published. The
         # subscription is dropped as soon as that is known.
