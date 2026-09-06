@@ -36,11 +36,19 @@ def quat_to_yaw(q):
 
 WHEEL_ODOM_TOPIC = '/mecanum_drive_controller/odometry'
 
+# The competition's MecanumDrive plugin publishes /odom and its transform at
+# odom_publish_frequency 50; the controller here integrates at the control
+# rate, 250 Hz, so the relay keeps every fifth. At several times real time the
+# extra four were 1500 transforms a second on /tf, drowning the 20 Hz joint
+# transforms in every listener's queue (measured 2026-09-06).
+ODOM_RATE = 50.0
+
 
 class OdomRelay(Node):
     def __init__(self):
         super().__init__('odom_relay')
         self.origin = None  # (x, y, yaw) of the odom frame in world
+        self.last_odom = None  # stamp of the last odometry relayed
         self.tf = TransformBroadcaster(self)
         self.static_tf = StaticTransformBroadcaster(self)
         self.pub = self.create_publisher(Odometry, '/odom', 10)
@@ -64,6 +72,11 @@ class OdomRelay(Node):
 
     def cb(self, msg: Odometry):
         """Republish the wheel odometry under the competition's names."""
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.last_odom is not None and stamp - self.last_odom < 1.0 / ODOM_RATE - 1e-6 \
+                and stamp >= self.last_odom:
+            return
+        self.last_odom = stamp
         out = Odometry()
         out.header.stamp = msg.header.stamp
         out.header.frame_id = 'odom'

@@ -207,8 +207,11 @@ def build_world(share, seed=None):
         collision_geoms(shelf_mesh, 'erc_shelf'),
         '    </body>',
         '',
-        '    <!-- Collection bin: a free body, resting on the table. -->',
-        f'    <body name="erc_collection_bin" pos="{fmt(BIN_POSE)}" quat="{PROP_QUAT}">',
+        '    <!-- Collection bin: a free body, resting on the table. It never sleeps',
+        '         so that a book placed in it never does either (a sleeping body has',
+        '         no contacts with anything static or asleep, and /bin_contacts is',
+        '         how a placement is judged). The books on the shelf do sleep. -->',
+        f'    <body name="erc_collection_bin" pos="{fmt(BIN_POSE)}" quat="{PROP_QUAT}" sleep="never">',
         '      <freejoint name="erc_collection_bin_joint"/>',
         f'      <inertial pos="{BIN_COM}" mass="{BIN_MASS:g}" '
         f'fullinertia="{BIN_INERTIA}"/>',
@@ -274,7 +277,7 @@ def build_world(share, seed=None):
        when loaded on its own: under the Euler/pyramidal defaults a resting
        book sinks 6.4 mm into a shelf, against 0.1 mm with these. -->
   <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5">
-    <flag multiccd="enable"/>
+    <flag multiccd="enable" sleep="enable"/>
   </option>
 
   <!-- The offscreen framebuffer defaults to 640x480, which is smaller than the

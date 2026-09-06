@@ -92,12 +92,21 @@ void CameraPlugin::update(const mjModel* model_arg, mjData* data)
 
     // Flag streaming cameras when their interval is due and any polled cameras that have a
     // pending trigger (consuming the one-shot request so they render exactly once).
+    // A streaming camera nobody listens to is not rendered at all: the render and the
+    // mjData snapshot it needs are the plugin's whole cost, and the interval is in
+    // simulated time, so at several times real time an unwatched camera would otherwise
+    // eat a core for frames that are dropped. The camera_info rides along with the
+    // frames it calibrates, so it is not published on its own either.
     for (auto& camera : cameras_)
     {
       if (camera.policy == CameraPolicy::STREAMING && stream_due)
       {
-        camera.render_pending = true;
-        any_selected = true;
+        if (camera.image_pub->get_subscription_count() > 0 ||
+            camera.depth_image_pub->get_subscription_count() > 0)
+        {
+          camera.render_pending = true;
+          any_selected = true;
+        }
       }
       else if (camera.policy == CameraPolicy::POLLED && camera.poll_requested)
       {

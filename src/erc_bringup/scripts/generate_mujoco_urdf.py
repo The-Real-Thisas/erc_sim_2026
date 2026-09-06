@@ -410,6 +410,13 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
         f'armature="{WHEEL_ARMATURE:g}"/>'
         for joint in WHEEL_JOINTS if f'name="{joint}"' in urdf)
 
+    # The scanners cast their rays on the plugin's worker thread (async), not
+    # inside mj_step: 818 rays against the arena's 371k mesh faces cost 5-6 ms
+    # per scan, and two scanners at 10 Hz put 220 us on every 2 ms physics
+    # step - half of what the whole step costs at rest (measured 2026-09-05,
+    # 430 us with the rays in the step against 220 us without). The scan is
+    # stamped with the time its rays were cast (plugin_state) and delivered
+    # one period later, like a real scanner's sweep.
     lidar_instances, sensors = [], []
     for name, site in LASERS:
         if f'name="{site}"' not in urdf:
@@ -425,7 +432,7 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
             f'            <config key="min_range" value="{min_range:g}"/>\n'
             f'            <config key="max_range" value="{max_range:g}"/>\n'
             f'            <config key="update_rate" value="{rate:g}"/>\n'
-            f'            <config key="async" value="0"/>\n'
+            f'            <config key="async" value="1"/>\n'
             f'          </instance>')
         sensors.append(
             f'        <plugin name="{name}" instance="{name}" objtype="site" '
@@ -484,9 +491,15 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
            centre 37 mm behind the pinch axis turned in the pads at about a
            degree a second and fell out after 70 s; a real book does not
            turn in a hand that holds it. With the noslip post-processor the
-           same hold drifts 0.3 deg in four minutes (measured 2026-09-05). -->
+           same hold drifts 0.3 deg in four minutes (measured 2026-09-05).
+           sleep: a free body that has been still for 10 steps stops being
+           simulated until something awake touches it or its qpos is set.
+           The 20 resting books were 80 of the arena's 88 contacts and most
+           of the constraint solve; asleep they cost nothing, and the robot
+           (actuated, so never asleep) wakes whatever it touches. mj_step
+           719 us -> 286 us on the full arena (measured 2026-09-05). -->
       <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5">
-        <flag multiccd="enable"/>
+        <flag multiccd="enable" sleep="enable"/>
       </option>
       <!-- znear is a fraction of the scene's statistic extent (~2 m), so 0.1
            puts the near plane at ~0.2 m: the D435's minimum range, and far

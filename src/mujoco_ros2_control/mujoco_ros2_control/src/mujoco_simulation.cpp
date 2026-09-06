@@ -1401,14 +1401,31 @@ void MujocoSimulation::physics_loop()
   // Track previous simulation time to detect UI-triggered resets
   mjtNum prevSimTime = 0;
 
+  // true when the last iteration ran out of its step budget still behind target
+  bool lagging = false;
+  // MUJOCO_STEP_PROFILE=1 prints, every 5 s, where the physics thread's time
+  // goes per step: the plugins before the step, mj_step itself (which also
+  // runs the sensor plugins), the publishers after it, and the rest of the
+  // loop. This is how the two scanners' rays were found inside mj_step.
+  const bool profile = std::getenv("MUJOCO_STEP_PROFILE") != nullptr;
+  double prof_pre = 0, prof_step = 0, prof_pub = 0, prof_n = 0;
+  auto prof_t0 = mj::Simulate::Clock::now();
+
   // run until asked to exit
   while (!sim_->exitrequest.load())
   {
     // sleep for 1 ms or yield, to let main thread run
     //  yield results in busy wait - which has better timing but kills battery life
+    // CHANGED FROM UPSTREAM: a sim that is behind its target speed does not sleep
+    // the full millisecond, only long enough for a waiting service to take the
+    // mutex (a bare yield lets this thread re-lock before the waiter wakes).
     if (sim_->run && sim_->busywait)
     {
       std::this_thread::yield();
+    }
+    else if (sim_->run && lagging)
+    {
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
     else
     {
@@ -1467,7 +1484,7 @@ void MujocoSimulation::physics_loop()
           const auto startCPU = mj::Simulate::Clock::now();
 
           // elapsed CPU and simulation time since last sync
-          const auto elapsedCPU = startCPU - syncCPU;
+          auto elapsedCPU = startCPU - syncCPU;
           auto elapsedSim = mj_data_->time - syncSim;
 
           // Ordinarily the speed factor for the simulation is pulled from the sim UI. However, this is
@@ -1480,40 +1497,24 @@ void MujocoSimulation::physics_loop()
           // than syncmisalign
           bool misaligned = std::abs(Seconds(elapsedCPU).count() / speedFactor - elapsedSim) > kSyncMisalign;
 
-          // out-of-sync (for any reason): reset sync times, step
+          // out-of-sync (for any reason): reset sync times, then step from here.
+          // CHANGED FROM UPSTREAM: upstream took a single step here and left the
+          // timing to the next iteration. When the CPU cannot keep up with the
+          // requested speed every iteration is misaligned, so that became one
+          // step per sleep, and the sim could never go faster than ~1x however
+          // much was asked for. Lost time is still not made up; the sync point
+          // simply moves.
           if (elapsedSim < 0 || elapsedCPU.count() < 0 || syncCPU.time_since_epoch().count() == 0 || misaligned ||
               sim_->speed_changed)
           {
-            // re-sync
             syncCPU = startCPU;
             syncSim = mj_data_->time;
+            elapsedCPU = {};
+            elapsedSim = 0;
             sim_->speed_changed = false;
-
-            apply_staged_control_inputs();
-            pre_step_callback_(mj_data_);
-            // run single step, let next iteration deal with timing
-            mj_step(mj_model_, mj_data_);
-
-            // Publish the per-step control state before the clock tick,
-            // so consumers woken by this tick read state synchronous with that sim time.
-            publish_control_state();
-            publish_clock();
-
-            const char* message = Diverged(mj_model_->opt.disableflags, mj_data_);
-            if (message)
-            {
-              sim_->run = 0;
-              mju::strcpy_arr(sim_->load_error, message);
-            }
-            else
-            {
-              stepped = true;
-              step_count_.fetch_add(1);
-            }
           }
 
-          // in-sync: step until ahead of cpu
-          else
+          // step until ahead of cpu, or the step budget is spent
           {
             bool measured = false;
             mjtNum prevSim = mj_data_->time;
@@ -1541,14 +1542,42 @@ void MujocoSimulation::physics_loop()
 #else
               sim_->InjectNoise(-1);
 #endif
+              const auto p0 = mj::Simulate::Clock::now();
               apply_staged_control_inputs();
               pre_step_callback_(mj_data_);
+              const auto p1 = mj::Simulate::Clock::now();
               // call mj_step
               mj_step(mj_model_, mj_data_);
+              const auto p2 = mj::Simulate::Clock::now();
 
               // Publish the per-step control state before the clock tick (see above)
               publish_control_state();
               publish_clock();
+              const auto p3 = mj::Simulate::Clock::now();
+              if (profile)
+              {
+                prof_pre += Seconds(p1 - p0).count();
+                prof_step += Seconds(p2 - p1).count();
+                prof_pub += Seconds(p3 - p2).count();
+                prof_n += 1.0;
+                if (p3 - prof_t0 > std::chrono::seconds(5))
+                {
+                  const double total = Seconds(p3 - prof_t0).count();
+                  int asleep = 0;
+                  for (int t = 0; t < mj_model_->ntree; t++)
+                  {
+                    asleep += mj_data_->tree_awake[t] ? 0 : 1;
+                  }
+                  RCLCPP_INFO(get_logger(),
+                              "step profile: ncon %d nefc %d trees asleep %d/%d; %.0f steps in %.2f s: "
+                              "pre %.0f us, step %.0f us, publish %.0f us, other %.0f us per step",
+                              mj_data_->ncon, mj_data_->nefc, asleep, mj_model_->ntree, prof_n, total,
+                              prof_pre / prof_n * 1e6, prof_step / prof_n * 1e6, prof_pub / prof_n * 1e6,
+                              (total - prof_pre - prof_step - prof_pub) / prof_n * 1e6);
+                  prof_t0 = p3;
+                  prof_pre = prof_step = prof_pub = prof_n = 0;
+                }
+              }
 
               const char* message = Diverged(mj_model_->opt.disableflags, mj_data_);
               if (message)
@@ -1571,6 +1600,7 @@ void MujocoSimulation::physics_loop()
               // Update current CPU time for next iteration
               currentCPU = mj::Simulate::Clock::now();
             }
+            lagging = Seconds((mj_data_->time - syncSim) * speedFactor) < currentCPU - syncCPU;
           }
 
           // save current state to history buffer
