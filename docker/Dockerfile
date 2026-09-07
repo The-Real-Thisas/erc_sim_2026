@@ -41,6 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-ros-gz-interfaces \
     && rm -rf /var/lib/apt/lists/*
 
+# Recording: the MCAP storage plugin, so `ros2 bag record -s mcap` writes a
+# file Foxglove replays directly (the stock image records sqlite3 only), and
+# the JPEG image transport, so a recorded camera is megabytes, not gigabytes.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-rosbag2-storage-mcap \
+    ros-humble-compressed-image-transport \
+    && rm -rf /var/lib/apt/lists/*
+
 # 3. MuJoCo backend
 # mujoco_ros2_control is vendored in src/, so this installs only what building
 # it needs: the MuJoCo library itself, the CMake package both its CMakeLists
