@@ -144,8 +144,13 @@ bool FreeJointStatePublisherPlugin::init(rclcpp::Node::SharedPtr node, const mjM
 
 void FreeJointStatePublisherPlugin::update(const mjModel* /*model*/, mjData* data)
 {
-  const rclcpp::Time now = node_->get_clock()->now();
-  if (now - last_publish_time_ < publish_period_)
+  // CHANGED FROM UPSTREAM: the period is measured on the snapshot's own time, as
+  // the camera plugin's is: above real time the physics batches several control
+  // periods into one snapshot while the node clock runs ahead, so the same poses
+  // went out again under later stamps. A time gone backwards (reset_world) is due.
+  const rclcpp::Time now(rclcpp::Duration::from_seconds(data->time).nanoseconds(), RCL_ROS_TIME);
+  const auto since_last = now - last_publish_time_;
+  if (since_last < publish_period_ && since_last.nanoseconds() >= 0)
   {
     return;
   }

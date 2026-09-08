@@ -75,9 +75,16 @@ void CameraPlugin::update(const mjModel* model_arg, mjData* data)
   // trigger has been received. Both are serviced here, on the sim thread, because this is
   // the only place we can safely snapshot the live mjData without racing the simulation.
   // TODO: Support per-camera publish rates?
-  const auto now = node_->get_clock()->now();
+  // CHANGED FROM UPSTREAM: the interval is measured on the snapshot's own time,
+  // not the node clock. Above real time the physics batches several control
+  // periods into one snapshot while the clock runs ahead of it, so the clock
+  // said a frame was due twice for the same instant and every frame was
+  // rendered and published twice (at 100x: 840 camera_info in 6 s, 416 stamps).
+  // A time that went backwards (reset_world) is due at once, not when it catches up.
+  const rclcpp::Time now(rclcpp::Duration::from_seconds(data->time).nanoseconds(), RCL_ROS_TIME);
+  const double since_last = (now - last_publish_time_).seconds();
   const bool stream_due =
-      has_streaming_cameras_ && (now - last_publish_time_).seconds() >= (1.0 / camera_publish_rate_);
+      has_streaming_cameras_ && (since_last >= (1.0 / camera_publish_rate_) || since_last < 0.0);
   const bool poll_due = poll_pending_.exchange(false);
 
   // Nothing to do this step: avoid taking the lock or copying data.
