@@ -359,6 +359,9 @@ private:
    * @brief Publish the current sim time to /clock.
    */
   void publish_clock();
+  // The simulated time as /clock carries it (the same truncation), for the
+  // service answers that report where the simulator stands.
+  static rclcpp::Time ros_time(double sim_time);
 
   /**
    * @brief Progresses the simulate windows display if not running headless.

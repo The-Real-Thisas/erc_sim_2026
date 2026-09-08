@@ -962,14 +962,30 @@ void MujocoSimulation::set_pause_callback(const std::shared_ptr<mujoco_ros2_cont
   {
     response->success = true;
     response->message = std::string("Simulation is already ") + (request->paused ? "paused." : "running.");
+    const std::unique_lock<std::recursive_mutex> lock(*sim_mutex_);
+    response->time = ros_time(mj_data_->time);    // a self-paused (diverged) simulator answers this branch
     RCLCPP_DEBUG(get_logger(), "%s", response->message.c_str());
     return;
   }
 
-  sim_->run = !request->paused;
-
-  if (!request->paused)
+  if (request->paused)
   {
+    sim_->run = false;
+    // CHANGED FROM UPSTREAM: the physics thread may be inside a burst of steps
+    // and finishes it before it sees the flag; the mutex is held for the whole
+    // burst, so taking it here means the time read is the one the simulator
+    // stands at. A client in lockstep (tiger's Robot.running) waits for the
+    // controllers' state at that time before it plans against it.
+    const std::unique_lock<std::recursive_mutex> lock(*sim_mutex_);
+    response->time = ros_time(mj_data_->time);
+  }
+  else
+  {
+    {
+      const std::unique_lock<std::recursive_mutex> lock(*sim_mutex_);
+      response->time = ros_time(mj_data_->time);  // read before the physics thread is let go
+    }
+    sim_->run = true;
     // Force timing re-sync so the physics loop doesn't try to catch up on
     // accumulated wall-clock time that elapsed while paused.
     sim_->speed_changed = true;
@@ -982,6 +998,7 @@ void MujocoSimulation::set_pause_callback(const std::shared_ptr<mujoco_ros2_cont
     if (pending > 0)
     {
       RCLCPP_WARN(get_logger(), "Resuming simulation while %u step(s) were pending; aborting.", pending);
+      const std::lock_guard<std::mutex> steps_lock(steps_cv_mutex_);
       pending_steps_.store(0);
       steps_interrupted_.store(true);
       steps_cv_.notify_all();
@@ -990,7 +1007,9 @@ void MujocoSimulation::set_pause_callback(const std::shared_ptr<mujoco_ros2_cont
 
   response->success = true;
   response->message = std::string("Simulation ") + (request->paused ? "paused." : "resumed.");
-  RCLCPP_INFO(get_logger(), "%s", response->message.c_str());
+  // CHANGED FROM UPSTREAM: debug, not info - a client in lockstep toggles this
+  // hundreds of times a run.
+  RCLCPP_DEBUG(get_logger(), "%s", response->message.c_str());
 }
 
 void MujocoSimulation::step_simulation_callback(
@@ -1025,6 +1044,7 @@ void MujocoSimulation::step_simulation_callback(
 
   std::unique_lock<std::mutex> lock(steps_cv_mutex_);
   const bool completed = steps_cv_.wait_for(lock, timeout, [this] { return pending_steps_.load() == 0; });
+  lock.unlock();
 
   if (!completed)
   {
@@ -1050,6 +1070,8 @@ void MujocoSimulation::step_simulation_callback(
     response->message = "Completed " + std::to_string(request->steps) + " simulation step(s).";
     RCLCPP_DEBUG(get_logger(), "%s", response->message.c_str());
   }
+  const std::unique_lock<std::recursive_mutex> sim_lock(*sim_mutex_);
+  response->time = ros_time(mj_data_->time);
 }
 
 int MujocoSimulation::frame_body_id(const std::string& frame_id) const
@@ -1469,6 +1491,7 @@ void MujocoSimulation::physics_loop()
           {
             RCLCPP_WARN(get_logger(), "Simulation resumed while %u step(s) were still pending; aborting.",
                         pending_steps_.load());
+            const std::lock_guard<std::mutex> steps_lock(steps_cv_mutex_);
             pending_steps_.store(0);
             steps_interrupted_.store(true);
             steps_cv_.notify_all();
@@ -1646,9 +1669,15 @@ void MujocoSimulation::physics_loop()
             publish_control_state();
             publish_clock();
 
+            // CHANGED FROM UPSTREAM: pending_steps_ changes under the waiter's mutex.
+            // step_simulation_callback checks the count and then sleeps on steps_cv_;
+            // a change between the two, notified without the mutex, was a lost wakeup
+            // (the call then sat out its 30 s timeout). A lockstep client steps the
+            // simulator hundreds of times a run, so the race was no longer rare.
             const char* message = Diverged(mj_model_->opt.disableflags, mj_data_);
             if (message)
             {
+              const std::lock_guard<std::mutex> steps_lock(steps_cv_mutex_);
               pending_steps_.store(0);
               step_diverged_.store(true);
               mju::strcpy_arr(sim_->load_error, message);
@@ -1657,9 +1686,12 @@ void MujocoSimulation::physics_loop()
             else
             {
               sim_->AddToHistory();
-              pending_steps_.fetch_sub(1);
+              {
+                const std::lock_guard<std::mutex> steps_lock(steps_cv_mutex_);
+                pending_steps_.fetch_sub(1);
+                steps_cv_.notify_all();
+              }
               step_count_.fetch_add(1);
-              steps_cv_.notify_all();
               update_sim_display();
             }
 
@@ -1693,15 +1725,17 @@ void MujocoSimulation::physics_loop()
   }
 }
 
-void MujocoSimulation::publish_clock()
+rclcpp::Time MujocoSimulation::ros_time(double sim_time)
 {
-  auto sim_time = mj_data_->time;
   int32_t sim_time_sec = static_cast<int32_t>(std::floor(sim_time));
   uint32_t sim_time_nanosec = static_cast<uint32_t>((sim_time - sim_time_sec) * 1e9);
-  rclcpp::Time sim_time_ros(sim_time_sec, sim_time_nanosec, RCL_ROS_TIME);
+  return rclcpp::Time(sim_time_sec, sim_time_nanosec, RCL_ROS_TIME);
+}
 
+void MujocoSimulation::publish_clock()
+{
   rosgraph_msgs::msg::Clock sim_time_msg;
-  sim_time_msg.clock = sim_time_ros;
+  sim_time_msg.clock = ros_time(mj_data_->time);
 // fixing for different naming convention on humble vs everything else
 #if ROS_DISTRO_HUMBLE
   clock_realtime_publisher_->tryPublish(sim_time_msg);
