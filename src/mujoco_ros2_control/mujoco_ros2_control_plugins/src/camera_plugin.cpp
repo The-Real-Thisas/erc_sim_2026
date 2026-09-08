@@ -115,11 +115,16 @@ void CameraPlugin::update(const mjModel* model_arg, mjData* data)
           camera.render_pending = true;
           any_selected = true;
         }
-        else if (camera.camera_info_pub->get_subscription_count() > 0)
+        else if (camera.camera_info_pub->get_subscription_count() > 0 ||
+                 (camera.depth_info_pub && camera.depth_info_pub->get_subscription_count() > 0))
         {
           auto info = camera.camera_info;
           info.header.stamp = now;
           camera.camera_info_pub->publish(info);
+          if (camera.depth_info_pub)
+          {
+            camera.depth_info_pub->publish(info);
+          }
         }
       }
       else if (camera.policy == CameraPolicy::POLLED && camera.poll_requested)
@@ -252,6 +257,12 @@ bool CameraPlugin::register_cameras()
     }
     camera.depth_topic = node_->get_parameter(param_ns + "depth_topic").as_string();
 
+    if (!node_->has_parameter(param_ns + "depth_info_topic"))
+    {
+      node_->declare_parameter(param_ns + "depth_info_topic", std::string());
+    }
+    camera.depth_info_topic = node_->get_parameter(param_ns + "depth_info_topic").as_string();
+
     if (!node_->has_parameter(param_ns + "trigger_service_name"))
     {
       node_->declare_parameter(param_ns + "trigger_service_name", camera.name + "/trigger");
@@ -268,6 +279,10 @@ bool CameraPlugin::register_cameras()
     RCLCPP_INFO(node_->get_logger(), "    info_topic: '%s'", camera.info_topic.c_str());
     RCLCPP_INFO(node_->get_logger(), "    image_topic: '%s'", camera.image_topic.c_str());
     RCLCPP_INFO(node_->get_logger(), "    depth_topic: '%s'", camera.depth_topic.c_str());
+    if (!camera.depth_info_topic.empty())
+    {
+      RCLCPP_INFO(node_->get_logger(), "    depth_info_topic: '%s'", camera.depth_info_topic.c_str());
+    }
     if (camera.policy == CameraPolicy::POLLED)
     {
       RCLCPP_INFO(node_->get_logger(), "    trigger_service_name: '%s'", camera.trigger_service_name.c_str());
@@ -277,6 +292,10 @@ bool CameraPlugin::register_cameras()
     camera.camera_info_pub = node_->create_publisher<sensor_msgs::msg::CameraInfo>(camera.info_topic, 1);
     camera.image_pub = node_->create_publisher<sensor_msgs::msg::Image>(camera.image_topic, 1);
     camera.depth_image_pub = node_->create_publisher<sensor_msgs::msg::Image>(camera.depth_topic, 1);
+    if (!camera.depth_info_topic.empty())
+    {
+      camera.depth_info_pub = node_->create_publisher<sensor_msgs::msg::CameraInfo>(camera.depth_info_topic, 1);
+    }
     if (camera.policy == CameraPolicy::POLLED)
     {
       camera.trigger_service = node_->create_service<std_srvs::srv::Trigger>(
@@ -641,6 +660,10 @@ void CameraPlugin::render_and_publish_camera(CameraData& camera, const rclcpp::T
   camera.image_pub->publish(camera.image);
   camera.depth_image_pub->publish(camera.depth_image);
   camera.camera_info_pub->publish(info);
+  if (camera.depth_info_pub)
+  {
+    camera.depth_info_pub->publish(info);
+  }
 }
 
 void CameraPlugin::handle_trigger(const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,

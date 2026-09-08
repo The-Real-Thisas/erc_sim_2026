@@ -87,6 +87,7 @@ struct CameraData
   std::string info_topic;
   std::string image_topic;
   std::string depth_topic;
+  std::string depth_info_topic;  // the same calibration again, as a depth camera's own; empty: not published
   std::string trigger_service_name;
 
   uint32_t width;
@@ -102,6 +103,7 @@ struct CameraData
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_image_pub;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr depth_info_pub;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr trigger_service;
 };
 
@@ -127,6 +129,9 @@ struct CameraData
  *     info_topic: <camera_name>/camera_info
  *     image_topic: <camera_name>/color
  *     depth_topic: <camera_name>/depth
+ *     depth_info_topic: ""  # the depth's own camera_info, as a depth camera driver publishes
+ *                           # it (the same calibration and frame: the depth is rendered
+ *                           # registered to the colour image); nothing unless given
  *     trigger_service_name: <camera_name>/trigger  # only used for polling camera policy
  *
  * Implementation notes

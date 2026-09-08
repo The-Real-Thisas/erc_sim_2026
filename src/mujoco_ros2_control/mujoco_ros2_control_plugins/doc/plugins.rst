@@ -86,6 +86,8 @@ Note that any number of cameras can be configured in the plugin configuration.
         info_topic: /camera_topic/color/camera_info
         image_topic: /camera_topic/color/image_raw
         depth_topic: /camera_topic/aligned_depth_to_color/image_raw
+        # optional: the same calibration published again as the depth camera's own
+        depth_info_topic: /camera_topic/aligned_depth_to_color/camera_info
 
 
 .. note::
