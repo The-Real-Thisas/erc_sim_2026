@@ -552,10 +552,11 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <modify_element type="geom" mesh="wheel_link" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
       <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
 {wheel_dynamics}
-      <!-- Rubber pad on paper ~1.2; torsional/rolling let the pinch resist
-           the book pivoting about the grasp axis (active because the book
-           is condim 6 and pair condim/friction take the max). -->
-      <modify_element type="geom" mesh="fingertip" class="collision" friction="1.2 0.015 0.002"/>
+      <!-- The competition's pad, mu 2.7 (upstream 93554d4; the pair with a
+           book takes the book's 10 anyway); torsional/rolling let the pinch
+           resist the book pivoting about the grasp axis (active because the
+           book is condim 6 and pair condim/friction take the max). -->
+      <modify_element type="geom" mesh="fingertip" class="collision" friction="2.7 0.015 0.002"/>
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; the arena spec starts

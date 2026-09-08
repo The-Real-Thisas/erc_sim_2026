@@ -58,9 +58,9 @@ ROW_FLOOR_Z_OFFSETS = [TOP_BOOK_Z - (i * ROW_SPACING) for i in range(NUM_ROWS)]
 NUMBER_MARKER_PLATE_X = SHELF_X - 0.245
 NUMBER_MARKER_PLATE_Z = 2.26
 
-BOOK_HALF = (0.125, 0.015, 0.08)     # the competition's 0.25 x 0.03 x 0.16 box
+BOOK_HALF = (0.125, 0.010, 0.08)     # the competition's 0.25 x 0.02 x 0.16 box (upstream 93554d4)
 BOOK_MASS = 0.3
-BOOK_FRICTION = '5.0 0.01 0.002'     # sliding mu 5.0 is the competition's value
+BOOK_FRICTION = '10.0 0.01 0.002'    # sliding mu 10 is the competition's value (upstream 93554d4)
 MARKER_HALF = (0.15, 0.15, 0.01)     # the competition's 0.3 x 0.3 plate face
 
 # Every arena prop is placed with the same pose rpy "1.5708 0 -1.5708",
