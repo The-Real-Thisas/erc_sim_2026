@@ -472,9 +472,8 @@ static mjModel* loadModelFromTopic(rclcpp::Node::SharedPtr node, const std::stri
     mnew = mj_compile(spec, nullptr);
     if (!mnew)
     {
-      const char* myerr = mjs_getError(spec);
-      RCLCPP_INFO(node->get_logger(), "Error %s", myerr);
-      RCLCPP_FATAL(node->get_logger(), "Failed to compile MuJoCo model: %s", error);
+      // a successful parse blanked `error`; the compile error lives on the spec
+      RCLCPP_FATAL(node->get_logger(), "Failed to compile MuJoCo model: %s", mjs_getError(spec));
       mj_deleteSpec(spec);
       return nullptr;
     }
