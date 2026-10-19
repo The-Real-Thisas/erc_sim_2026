@@ -1,3 +1,15 @@
+## Phase 2 Updates (Physical Deployment Phase)
+
+- **Book spine width:** Books have returned to **3cm** wide to match the physical build. Please update your parameters accordingly.
+- **Number markers:** Markers have been added to the top shelf row of each column for better visibility from the TIAGo Pro.
+- **Updated launch files:** The simulation launch files have been updated to include the Round 1 and Round 2 environments:
+
+```bash
+ros2 launch erc_bringup <round_1_launch_file>   # Round 1 environment
+ros2 launch erc_bringup <round_2_launch_file>   # Round 2 environment
+```
+
+
 ### Updates 11/09/26
 - Competition Rules Update: Book spine width reduced from **3cm to 2cm**. Please update parameters accordingly.
 - Manipulation: A possible workaround to issue [#2](https://github.com/dfl-rlab/erc_sim_2026/issues/2) is using the position controller and the effort interface feedback from the gripper to keep publishing position in a closed-loop. This produces the following video:
