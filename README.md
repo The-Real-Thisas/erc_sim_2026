@@ -5,8 +5,8 @@
 - **Updated launch files:** The simulation launch files have been updated to include the Round 1 and Round 2 environments:
 
 ```bash
-ros2 launch erc_bringup <round_1_launch_file>   # Round 1 environment
-ros2 launch erc_bringup <round_2_launch_file>   # Round 2 environment
+ros2 launch erc_bringup simulation_round_1.launch.py   # Round 1 environment
+ros2 launch erc_bringup simulation_round_2.launch.py   # Round 2 environment
 ```
 
 
