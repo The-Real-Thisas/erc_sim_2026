@@ -5,7 +5,7 @@
     <link name="number_marker_base_link">
 
       <visual name="base_link_number_marker_visual">
-        <pose>0 0 0 0 0 0</pose>
+        <pose>0 0 0 0 0 1.5708</pose>
         <geometry>
         <box><size>0.3 0.002 0.3</size></box>
         </geometry>

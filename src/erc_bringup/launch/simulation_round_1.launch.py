@@ -46,7 +46,7 @@ ROW_FLOOR_Z_OFFSETS = [TOP_BOOK_Z - (i * ROW_SPACING) for i in range(NUM_ROWS)]
 
 # Number marker positioning
 NUMBER_MARKER_PLATE_X = SHELF_X - 0.245 # To be flush with shelf edge
-NUMBER_MARKER_PLATE_Z = 2.26
+NUMBER_MARKER_PLATE_Z = 1.93
 
 
 def generate_launch_description():
@@ -295,12 +295,12 @@ def generate_launch_description():
                 arguments=[
                     '-file', tmp_number_marker_paths[number], '-name', f'number_marker_col_{col+1}',
                     '-x', str(NUMBER_MARKER_PLATE_X), '-y', str(y), '-z', str(z),
-                    '-R', '0', '-P', '0', '-Y', str(ROTATE_90_DEGREES_RAD),
+                    '-R', '0', '-P', '0', '-Y', '0',
                 ],
                 output='screen')
         )
 
-    spawn_number_markers = TimerAction(period=5.0, actions= number_marker_spawn_nodes)
+    spawn_number_markers = TimerAction(period=4.0, actions= number_marker_spawn_nodes)
 
     # ── Depth-camera point cloud (sensors/depth_to_cloud) ──
     # The gz rgbd_camera never fills /depth/points. The `sensors` package
