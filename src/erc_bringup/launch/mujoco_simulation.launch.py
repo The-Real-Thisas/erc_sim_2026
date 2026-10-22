@@ -49,6 +49,8 @@ def launch_setup(context, *args, **kwargs):
     plugins_file = LaunchConfiguration('plugins').perform(context)
     scene_override = LaunchConfiguration('scene').perform(context)
     seed = LaunchConfiguration('seed').perform(context)
+    rnd = LaunchConfiguration('round').perform(context)
+    book_mu = LaunchConfiguration('book_mu').perform(context)
 
     bringup_share = get_package_share_directory('erc_bringup')
     scripts = os.path.join(get_package_prefix('erc_bringup'), 'lib', 'erc_bringup')
@@ -94,6 +96,10 @@ def launch_setup(context, *args, **kwargs):
         cmd = [os.path.join(scripts, 'generate_mujoco_world.py'), '-o', scene_path]
         if seed:
             cmd += ['--seed', seed]
+        if rnd:
+            cmd += ['--round', rnd]
+        if book_mu:
+            cmd += ['--book-mu', book_mu]
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as exc:
@@ -258,6 +264,12 @@ def generate_launch_description():
                                           'instead of the generated arena'),
         DeclareLaunchArgument('seed', default_value='',
                               description='Arena layout seed (default: $ERC_SEED)'),
+        DeclareLaunchArgument('round', default_value='',
+                              description='Competition round layout, 1 or 2 '
+                                          '(default: $ERC_ROUND or 1)'),
+        DeclareLaunchArgument('book_mu', default_value='',
+                              description='Book sliding friction '
+                                          '(default: $ERC_BOOK_MU or the generator\'s)'),
         DeclareLaunchArgument('depth_cloud', default_value='true',
                               description='Rebuild the head depth point cloud '
                                           'via sensors/depth_to_cloud'),

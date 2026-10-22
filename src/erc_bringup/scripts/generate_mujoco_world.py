@@ -56,11 +56,36 @@ TOP_BOOK_Z = 0.825
 ROW_SPACING = 0.33
 ROW_FLOOR_Z_OFFSETS = [TOP_BOOK_Z - (i * ROW_SPACING) for i in range(NUM_ROWS)]
 NUMBER_MARKER_PLATE_X = SHELF_X - 0.245
-NUMBER_MARKER_PLATE_Z = 2.26
+NUMBER_MARKER_PLATE_Z = 1.93         # phase 2: on the top shelf row, in reach of the head camera (upstream cc3f2e0)
 
-BOOK_HALF = (0.125, 0.010, 0.08)     # the competition's 0.25 x 0.02 x 0.16 box (upstream 93554d4)
+# Round 2 (upstream simulation_round_2.launch.py): columns 1, 3, 5 as round 1;
+# column 2 holds four white books whose spines carry a word, shuffled by the
+# seed; column 4 holds coloured books flush against the column's side walls,
+# alternating left/right from the top row down. Round 2 lays books out on a
+# 1.03 m pitch where round 1 uses 1.0; both are kept so a seed reproduces the
+# organisers' layout draw for draw.
+ROUND2_PITCH = COLUMN_WIDTH + 0.03
+WHITE_COLUMN, EDGE_COLUMN = 2, 4
+WHITE_BOOKS = [('A', 'A1'), ('B', 'B1'), ('C', 'C1'), ('D', 'D1')]   # (cover, spine) textures
+# The words the spine textures carry, for a judge; the robot has to read them.
+WHITE_WORDS = {'A': 'FUTURE', 'B': 'ROBOT', 'C': 'LIBRARY', 'D': 'AGENT'}
+# The shelf mesh's dividers (mesh_collision.py's exact boxes): 35 mm thick on a
+# 1.035 m pitch, so column c's inner faces sit at its centre +-0.5. Upstream
+# puts its edge books at the 1.03 grid +-0.485, which leaves one of each pair
+# 5 mm inside the divider and the other 5 mm clear of it; the physical shelf
+# has them flush, so this does: book face 0.5 mm off the divider's face.
+SHELF_DIVIDER_PITCH = 1.035
+EDGE_CLEARANCE = 0.0005
+
+BOOK_HALF = (0.125, 0.015, 0.08)     # the competition's 0.25 x 0.03 x 0.16 box (upstream cc3f2e0)
 BOOK_MASS = 0.3
-BOOK_FRICTION = '10.0 0.01 0.002'    # sliding mu 10 is the competition's value (upstream 93554d4)
+# Upstream sets mu 10 so books never slip in Gazebo. A real book's cover on a
+# rubber pad or a wooden board is nearer 0.4-1.2, and a grip that only holds at
+# mu 10 drops the book on the real robot, so the dev sim uses a realistic value
+# and ERC_BOOK_MU sweeps it. priority="2" makes the book's friction govern
+# every contact it is in (MuJoCo otherwise takes the larger of the pair, which
+# would leave the fingertip pads' 2.7 in charge of the grip).
+BOOK_MU = 0.8
 MARKER_HALF = (0.15, 0.15, 0.01)     # the competition's 0.3 x 0.3 plate face
 
 # Every arena prop is placed with the same pose rpy "1.5708 0 -1.5708",
@@ -75,6 +100,13 @@ BOOK_QUAT = '0.70710678 0 0.70710678 0'
 # the digits as a blank white slab. These axes put the plane's normal along -X
 # (facing the robot) with the digit upright and reading the right way round.
 MARKER_XYAXES = '0 -1 0 0 0 1'
+# The white books' printed faces are planes too, children of the book body, so
+# in book-local axes (the body's x is world -z, its z world +x). The spine, at
+# local z -half, faces the robot with its word reading top to bottom like the
+# upstream texture; the covers sit on the two large +-y faces.
+SPINE_XYAXES = '0 -1 0 -1 0 0'
+COVER_XYAXES = {+1: '-1 0 0 0 0 1', -1: '-1 0 0 0 0 -1'}
+PRINT_PROUD = 0.0005                 # printed planes sit this far off the box face
 
 # The collection bin's interior, in bin-local coordinates. The mesh is bevelled,
 # so mesh_collision.py refuses it and these are measured from the mesh instead:
@@ -122,7 +154,37 @@ def visual_mesh(name, mesh_name, rgba, indent=6):
             f'type="mesh" mesh="{mesh_name}" rgba="{fmt(rgba)}"/>')
 
 
-def build_world(share, seed=None):
+def book_friction(mu):
+    return f'{mu:g} 0.01 0.002'
+
+
+def book_body(name, pos, material, mu, prints=()):
+    """A free standing book; `prints` are extra textured planes (white books)."""
+    x, y, z = pos
+    out = [f'    <body name="{name}" pos="{x:g} {y:.6g} {z:g}" quat="{BOOK_QUAT}">',
+           f'      <freejoint name="{name}_joint"/>',
+           f'      <geom name="{name}_geom" type="box" size="{fmt(BOOK_HALF)}" '
+           f'mass="{BOOK_MASS:g}" friction="{book_friction(mu)}" condim="6" priority="2" '
+           f'material="{material}"/>']
+    out += [f'      {p}' for p in prints]
+    out.append('    </body>')
+    return out
+
+
+def white_prints(name, cover, spine):
+    hx, hy, hz = BOOK_HALF
+    spine_pos = (0, 0, -(hz + PRINT_PROUD))
+    out = [f'<geom name="{name}_spine" class="arena_visual" type="plane" pos="{fmt(spine_pos)}" '
+           f'xyaxes="{SPINE_XYAXES}" size="{hy:g} {hx:g} 0.01" material="white_{spine}"/>']
+    for side, axes in COVER_XYAXES.items():
+        pos = (0, side * (hy + PRINT_PROUD), 0)
+        out.append(f'<geom name="{name}_cover_{"p" if side > 0 else "n"}" class="arena_visual" '
+                   f'type="plane" pos="{fmt(pos)}" xyaxes="{axes}" size="{hx:g} {hz:g} 0.01" '
+                   f'material="white_{cover}"/>')
+    return out
+
+
+def build_world(share, seed=None, rnd=1, book_mu=BOOK_MU):
     # An empty ERC_SEED means 'unseeded'; int('') would otherwise abort the
     # whole launch with a traceback.
     if seed:
@@ -153,6 +215,16 @@ def build_world(share, seed=None):
     ]
     for colour, rgba in BOOK_COLOURS.items():
         assets.append(f'    <material name="book_{colour}" rgba="{fmt(rgba)}"/>')
+    if rnd == 2:
+        assets.append('    <material name="book_white" rgba="1 1 1 1"/>')
+        white_tex_dir = os.path.join(models, 'white_book', 'textures')
+        for tex_name in sorted({t for pair in WHITE_BOOKS for t in pair}):
+            tex = os.path.join(white_tex_dir, f'{tex_name}.png')
+            if not os.path.exists(tex):
+                sys.exit(f'missing white book texture: {tex}')
+            assets.append(f'    <texture type="2d" name="white_{tex_name}" file="{tex}"/>')
+            assets.append(f'    <material name="white_{tex_name}" texture="white_{tex_name}" '
+                          f'texrepeat="1 1" texuniform="false"/>')
     for number in range(1, NUM_COLUMNS + 1):
         tex = os.path.join(marker_tex_dir, f'{number}.png')
         if not os.path.exists(tex):
@@ -223,35 +295,62 @@ def build_world(share, seed=None):
     body.append('    </body>')
     body.append('')
 
-    # ── Books: the draw order is part of the arena spec - five columns, each
-    #    shuffling its four colours then jittering each book's y - so a given
-    #    ERC_SEED always reproduces the same layout. ──
-    body.append('    <!-- Books: one per active shelf row, colours drawn from ERC_SEED. -->')
+    # ── Books and markers: the draw order is part of the arena spec, so a given
+    #    ERC_SEED reproduces the organisers' layout. Round 1 (upstream
+    #    simulation_round_1.launch.py): five columns each shuffle their four
+    #    colours then jitter each book's y; then the markers are shuffled.
+    #    Round 2 (simulation_round_2.launch.py): the white books' order is
+    #    shuffled first, then the columns draw as round 1 except that column 2
+    #    draws no shuffle (all white) and column 4 no jitter (flush to the
+    #    walls); the markers are NOT shuffled (column n carries n). ──
+    if rnd == 2:
+        white_books = list(WHITE_BOOKS)
+        random.shuffle(white_books)
+    pitch = ROUND2_PITCH if rnd == 2 else COLUMN_WIDTH
+    offsets = [((NUM_COLUMNS - 1) / 2 - c) * pitch for c in range(NUM_COLUMNS)]
+    body.append(f'    <!-- Books: round {rnd}, one per active shelf row, drawn from ERC_SEED. -->')
     for col in range(NUM_COLUMNS):
-        colours_this_column = list(BOOK_COLOURS.keys())
-        random.shuffle(colours_this_column)
+        shelf_num = col + 1
+        white = rnd == 2 and shelf_num == WHITE_COLUMN
+        edge = rnd == 2 and shelf_num == EDGE_COLUMN
+        if white:
+            colours_this_column = ['white'] * len(ACTIVE_ROWS)
+        else:
+            colours_this_column = list(BOOK_COLOURS.keys())
+            random.shuffle(colours_this_column)
         for i, row in enumerate(ACTIVE_ROWS):
             colour = colours_this_column[i]
-            name = f'book_col_{col + 1}_row_{row + 1}_{colour}'
-            y = (SHELF_Y + COLUMN_Y_OFFSETS[col]
-                 + random.uniform(-COLUMN_JITTER_RANGE, COLUMN_JITTER_RANGE))
+            if edge:
+                # left, right, left, right from the top row, as upstream; flush
+                # against the mesh's own divider face (see SHELF_DIVIDER_PITCH)
+                side = 1 if i % 2 == 0 else -1
+                centre = SHELF_Y + ((NUM_COLUMNS - 1) / 2 - col) * SHELF_DIVIDER_PITCH
+                y = centre + side * (COLUMN_WIDTH / 2 - BOOK_HALF[1] - EDGE_CLEARANCE)
+            else:
+                y = (SHELF_Y + offsets[col]
+                     + random.uniform(-COLUMN_JITTER_RANGE, COLUMN_JITTER_RANGE))
             z = SHELF_Z + ROW_FLOOR_Z_OFFSETS[row]
             x = SHELF_X - 0.1
-            body.append(f'    <body name="{name}" pos="{x:g} {y:.6g} {z:g}" quat="{BOOK_QUAT}">')
-            body.append(f'      <freejoint name="{name}_joint"/>')
-            body.append(f'      <geom name="{name}_geom" type="box" size="{fmt(BOOK_HALF)}" '
-                        f'mass="{BOOK_MASS:g}" friction="{BOOK_FRICTION}" condim="6" '
-                        f'material="book_{colour}"/>')
-            body.append('    </body>')
+            if white:
+                cover, spine = white_books[i]
+                name = f'book_col_{shelf_num}_row_{row + 1}_white_{cover}'
+                body += book_body(name, (x, y, z), 'book_white', book_mu,
+                                  white_prints(name, cover, spine))
+            else:
+                name = f'book_col_{shelf_num}_row_{row + 1}_{colour}'
+                body += book_body(name, (x, y, z), f'book_{colour}', book_mu)
     body.append('')
 
-    # ── Number markers: static, visual only, order drawn from ERC_SEED. ──
-    body.append('    <!-- Number markers above each column, order drawn from ERC_SEED. -->')
+    # ── Number markers: static, visual only. ──
     shelf_number_markers = list(range(1, NUM_COLUMNS + 1))
-    random.shuffle(shelf_number_markers)
+    if rnd == 2:
+        body.append('    <!-- Number markers on the top row: column n carries n (round 2). -->')
+    else:
+        body.append('    <!-- Number markers on the top row, order drawn from ERC_SEED. -->')
+        random.shuffle(shelf_number_markers)
     for col in range(NUM_COLUMNS):
         number = shelf_number_markers[col]
-        y = SHELF_Y + COLUMN_Y_OFFSETS[col]
+        y = SHELF_Y + offsets[col]
         body.append(
             f'    <geom name="number_marker_col_{col + 1}" class="arena_visual" type="plane" '
             f'pos="{NUMBER_MARKER_PLATE_X:g} {y:g} {NUMBER_MARKER_PLATE_Z:g}" '
@@ -318,14 +417,20 @@ def main():
     ap.add_argument('-o', '--output', required=True)
     ap.add_argument('--seed', default=os.environ.get('ERC_SEED'),
                     help='book/marker layout seed (default: $ERC_SEED)')
+    ap.add_argument('--round', type=int, choices=(1, 2),
+                    default=int(os.environ.get('ERC_ROUND') or 1),
+                    help='competition round layout (default: $ERC_ROUND or 1)')
+    ap.add_argument('--book-mu', type=float,
+                    default=float(os.environ.get('ERC_BOOK_MU') or BOOK_MU),
+                    help=f'book sliding friction (default: $ERC_BOOK_MU or {BOOK_MU})')
     args = ap.parse_args()
 
     share = get_package_share_directory('erc_description')
-    xml = build_world(share, args.seed)
+    xml = build_world(share, args.seed, args.round, args.book_mu)
     with open(args.output, 'w') as f:
         f.write(xml)
     print(f'[generate_mujoco_world] wrote {args.output} '
-          f'({len(xml):,} bytes, seed={args.seed})')
+          f'({len(xml):,} bytes, seed={args.seed}, round={args.round}, book_mu={args.book_mu:g})')
 
 
 if __name__ == '__main__':
