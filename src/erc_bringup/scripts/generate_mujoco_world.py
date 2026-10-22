@@ -79,13 +79,14 @@ EDGE_CLEARANCE = 0.0005
 
 BOOK_HALF = (0.125, 0.015, 0.08)     # the competition's 0.25 x 0.03 x 0.16 box (upstream cc3f2e0)
 BOOK_MASS = 0.3
-# Upstream sets mu 10 so books never slip in Gazebo. A real book's cover on a
-# rubber pad or a wooden board is nearer 0.4-1.2, and a grip that only holds at
-# mu 10 drops the book on the real robot, so the dev sim uses a realistic value
-# and ERC_BOOK_MU sweeps it. priority="2" makes the book's friction govern
-# every contact it is in (MuJoCo otherwise takes the larger of the pair, which
-# would leave the fingertip pads' 2.7 in charge of the grip).
-BOOK_MU = 0.8
+# Upstream sets mu 10 so books never slip in Gazebo. A grip or a drag that only
+# works at mu 10 fails on the real robot, so the dev sim uses realistic values
+# and sweeps them: this is a book's paper cover on a wooden board (ERC_BOOK_MU).
+# priority="2" makes it govern the book's contacts with the shelf, the bin and
+# other books (MuJoCo otherwise takes the larger of a pair); the fingertip pads
+# carry their own, higher, at priority 3 (generate_mujoco_urdf.py PAD_MU), so a
+# pinch and a drag each see the two frictions a real one would.
+BOOK_MU = 0.5
 MARKER_HALF = (0.15, 0.15, 0.01)     # the competition's 0.3 x 0.3 plate face
 
 # Every arena prop is placed with the same pose rpy "1.5708 0 -1.5708",

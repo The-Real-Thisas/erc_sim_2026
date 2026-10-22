@@ -28,6 +28,7 @@ Run inside the container after building:
 
 import argparse
 import math
+import os
 import re
 import sys
 
@@ -106,6 +107,14 @@ WHEEL_KV = 20.0
 # keep grip along, so all of it goes. The wheels still carry the robot's weight and
 # still collide with the world; they just do not resist sliding.
 WHEEL_FRICTION = '0.01 0.001 0.0001'
+# The fingertip pads: rubber on a book's paper cover, nearer 1 than the
+# competition's 2.7, and swept for the dev sim's friction band (ERC_PAD_MU).
+# priority 3 puts the pad's friction in charge of every contact it is in -
+# above the books' priority 2 (generate_mujoco_world.py), whose own friction
+# then governs book on shelf and book on bin only. Without it one number
+# governed both sides of a pinch and of a drag, and no drag can ever beat a
+# shelf whose friction equals the pad's.
+PAD_MU = float(os.environ.get('ERC_PAD_MU') or 1.0)
 
 # The gripper is a four-bar linkage: the fingertip is pinned to BOTH the inner
 # finger (a URDF joint) and the outer finger (a loop the URDF cannot express,
@@ -552,11 +561,10 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <modify_element type="geom" mesh="wheel_link" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
       <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
 {wheel_dynamics}
-      <!-- The competition's pad, mu 2.7 (upstream 93554d4; the pair with a
-           book takes the book's 10 anyway); torsional/rolling let the pinch
-           resist the book pivoting about the grasp axis (active because the
-           book is condim 6 and pair condim/friction take the max). -->
-      <modify_element type="geom" mesh="fingertip" class="collision" friction="2.7 0.015 0.002"/>
+      <!-- The pad (PAD_MU, priority 3: see there); torsional/rolling let the
+           pinch resist the book pivoting about the grasp axis (active because
+           the book is condim 6 and a pair's condim takes the max). -->
+      <modify_element type="geom" mesh="fingertip" class="collision" friction="{PAD_MU:g} 0.015 0.002" priority="3"/>
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; the arena spec starts
