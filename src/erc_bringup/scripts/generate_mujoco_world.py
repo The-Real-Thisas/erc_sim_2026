@@ -100,13 +100,35 @@ BOOK_QUAT = '0.70710678 0 0.70710678 0'
 # the digits as a blank white slab. These axes put the plane's normal along -X
 # (facing the robot) with the digit upright and reading the right way round.
 MARKER_XYAXES = '0 -1 0 0 0 1'
-# The white books' printed faces are planes too, children of the book body, so
-# in book-local axes (the body's x is world -z, its z world +x). The spine, at
-# local z -half, faces the robot with its word reading top to bottom like the
-# upstream texture; the covers sit on the two large +-y faces.
-SPINE_XYAXES = '0 -1 0 -1 0 0'
-COVER_XYAXES = {+1: '-1 0 0 0 0 1', -1: '-1 0 0 0 0 -1'}
-PRINT_PROUD = 0.0005                 # printed planes sit this far off the box face
+# The white books' printed faces. A plane is only allowed on a static body, so
+# each print is a single textured quad (a flat mesh, shell inertia, no mass) a
+# hair off the box face, in book-local axes: the body's x is world -z, its y
+# world y, its z world +x. The spine, at local z -half, faces the robot with
+# the image's columns across it (u along world -y) and its rows top to bottom
+# (v along world -z), as upstream paints it; the covers sit on the two large
+# +-y faces with the image's long side along the book's height.
+PRINT_PROUD = 0.0005
+
+
+def _quad(name, verts, uv, faces):
+    return (f'    <mesh name="{name}" inertia="shell" vertex="{fmt(v for p in verts for v in p)}" '
+            f'texcoord="{fmt(t for p in uv for t in p)}" face="{faces}"/>')
+
+
+def print_meshes():
+    hx, hy, hz = BOOK_HALF
+    z = -(hz + PRINT_PROUD)
+    yp = hy + PRINT_PROUD
+    corners = ((0, 0), (1, 0), (1, 1), (0, 1))
+    return [
+        # spine: top-left, top-right, bottom-right, bottom-left as seen from the robot
+        _quad('white_spine', [(-hx, hy, z), (-hx, -hy, z), (hx, -hy, z), (hx, hy, z)],
+              corners, '0 2 1 0 3 2'),
+        _quad('white_cover_p', [(-hx, yp, -hz), (hx, yp, -hz), (hx, yp, hz), (-hx, yp, hz)],
+              corners, '0 2 1 0 3 2'),
+        _quad('white_cover_n', [(-hx, -yp, -hz), (hx, -yp, -hz), (hx, -yp, hz), (-hx, -yp, hz)],
+              corners, '0 1 2 0 2 3'),
+    ]
 
 # The collection bin's interior, in bin-local coordinates. The mesh is bevelled,
 # so mesh_collision.py refuses it and these are measured from the mesh instead:
@@ -172,16 +194,9 @@ def book_body(name, pos, material, mu, prints=()):
 
 
 def white_prints(name, cover, spine):
-    hx, hy, hz = BOOK_HALF
-    spine_pos = (0, 0, -(hz + PRINT_PROUD))
-    out = [f'<geom name="{name}_spine" class="arena_visual" type="plane" pos="{fmt(spine_pos)}" '
-           f'xyaxes="{SPINE_XYAXES}" size="{hy:g} {hx:g} 0.01" material="white_{spine}"/>']
-    for side, axes in COVER_XYAXES.items():
-        pos = (0, side * (hy + PRINT_PROUD), 0)
-        out.append(f'<geom name="{name}_cover_{"p" if side > 0 else "n"}" class="arena_visual" '
-                   f'type="plane" pos="{fmt(pos)}" xyaxes="{axes}" size="{hx:g} {hz:g} 0.01" '
-                   f'material="white_{cover}"/>')
-    return out
+    return [f'<geom name="{name}_{part}" class="arena_visual" type="mesh" mesh="white_{part}" '
+            f'mass="0" material="white_{tex}"/>'
+            for part, tex in (('spine', spine), ('cover_p', cover), ('cover_n', cover))]
 
 
 def build_world(share, seed=None, rnd=1, book_mu=BOOK_MU):
@@ -225,6 +240,7 @@ def build_world(share, seed=None, rnd=1, book_mu=BOOK_MU):
             assets.append(f'    <texture type="2d" name="white_{tex_name}" file="{tex}"/>')
             assets.append(f'    <material name="white_{tex_name}" texture="white_{tex_name}" '
                           f'texrepeat="1 1" texuniform="false"/>')
+        assets += print_meshes()
     for number in range(1, NUM_COLUMNS + 1):
         tex = os.path.join(marker_tex_dir, f'{number}.png')
         if not os.path.exists(tex):
