@@ -117,6 +117,17 @@ WHEEL_FRICTION = '0.01 0.001 0.0001'
 # condim too, so the pad must be condim 6 itself: at the default 3 no pad
 # contact carries torsional friction and the book swings about the grasp axis.
 PAD_MU = float(os.environ.get('ERC_PAD_MU') or 1.0)
+# How hard the pad is. solref sets a contact's stiffness as an acceleration,
+# so its N/m scales with the effective mass at the contact, and at the default
+# time constant (0.02 s) the 8 N pinch sank the pads 1-3 mm into the book, and
+# up to 5 mm while the arm or the base accelerated - the screw closing
+# 0.0275 -> 0.0225 on a 30 mm book - and the book swung loose in the jaws in
+# those moments (issue #57). A rubber pad on a card cover gives a fraction of a
+# millimetre: 2e5-1e6 N/m for 2 mm of rubber over 4 cm^2. 0.004 s is twice the
+# timestep, the stiffest MuJoCo allows (refsafe clamps anything lower), and
+# there the pinch sinks about 0.1 mm, still a few times softer than rubber
+# (ERC_PAD_SOLREF). The pad's priority makes its solref govern every pad contact.
+PAD_SOLREF = float(os.environ.get('ERC_PAD_SOLREF') or 0.004)
 
 # The gripper is a four-bar linkage: the fingertip is pinned to BOTH the inner
 # finger (a URDF joint) and the outer finger (a loop the URDF cannot express,
@@ -563,10 +574,10 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <modify_element type="geom" mesh="wheel_link" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
       <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
 {wheel_dynamics}
-      <!-- The pad (PAD_MU, priority 3: see there); condim 6 gives the pinch the
+      <!-- The pad (PAD_MU, priority 3, PAD_SOLREF: see there); condim 6 gives the pinch the
            torsional/rolling friction that resists the book pivoting about the
            grasp axis (the higher priority's condim governs the pair). -->
-      <modify_element type="geom" mesh="fingertip" class="collision" friction="{PAD_MU:g} 0.015 0.002" condim="6" priority="3"/>
+      <modify_element type="geom" mesh="fingertip" class="collision" friction="{PAD_MU:g} 0.015 0.002" condim="6" priority="3" solref="{PAD_SOLREF:g} 1"/>
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; the arena spec starts
