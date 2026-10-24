@@ -83,9 +83,10 @@ BOOK_MASS = 0.3
 # works at mu 10 fails on the real robot, so the dev sim uses realistic values
 # and sweeps them: this is a book's paper cover on a wooden board (ERC_BOOK_MU).
 # priority="2" makes it govern the book's contacts with the shelf, the bin and
-# other books (MuJoCo otherwise takes the larger of a pair); the fingertip pads
-# carry their own, higher, at priority 3 (generate_mujoco_urdf.py PAD_MU), so a
-# pinch and a drag each see the two frictions a real one would.
+# other books (MuJoCo otherwise takes the larger of a pair), condim included;
+# the fingertip pads carry their own friction and condim at a higher priority,
+# 3 (generate_mujoco_urdf.py PAD_MU), so a pinch and a drag each see the two
+# frictions a real one would.
 BOOK_MU = 0.5
 MARKER_HALF = (0.15, 0.15, 0.01)     # the competition's 0.3 x 0.3 plate face
 

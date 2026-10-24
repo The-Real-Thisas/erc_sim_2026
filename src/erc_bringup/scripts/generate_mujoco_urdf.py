@@ -113,7 +113,9 @@ WHEEL_FRICTION = '0.01 0.001 0.0001'
 # above the books' priority 2 (generate_mujoco_world.py), whose own friction
 # then governs book on shelf and book on bin only. Without it one number
 # governed both sides of a pinch and of a drag, and no drag can ever beat a
-# shelf whose friction equals the pad's.
+# shelf whose friction equals the pad's. The winning geom sets the contact's
+# condim too, so the pad must be condim 6 itself: at the default 3 no pad
+# contact carries torsional friction and the book swings about the grasp axis.
 PAD_MU = float(os.environ.get('ERC_PAD_MU') or 1.0)
 
 # The gripper is a four-bar linkage: the fingertip is pinned to BOTH the inner
@@ -561,10 +563,10 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <modify_element type="geom" mesh="wheel_link" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
       <modify_element type="geom" mesh="wheel_link_reflected" class="collision" friction="{WHEEL_FRICTION}" priority="1"/>
 {wheel_dynamics}
-      <!-- The pad (PAD_MU, priority 3: see there); torsional/rolling let the
-           pinch resist the book pivoting about the grasp axis (active because
-           the book is condim 6 and a pair's condim takes the max). -->
-      <modify_element type="geom" mesh="fingertip" class="collision" friction="{PAD_MU:g} 0.015 0.002" priority="3"/>
+      <!-- The pad (PAD_MU, priority 3: see there); condim 6 gives the pinch the
+           torsional/rolling friction that resists the book pivoting about the
+           grasp axis (the higher priority's condim governs the pair). -->
+      <modify_element type="geom" mesh="fingertip" class="collision" friction="{PAD_MU:g} 0.015 0.002" condim="6" priority="3"/>
 {chr(10).join(gravcomp)}
       <!-- Where the robot starts. The root body carries the free joint, so its
            pos/quat are the floating base's initial qpos; the arena spec starts
