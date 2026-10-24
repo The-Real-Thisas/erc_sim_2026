@@ -523,11 +523,14 @@ def build_mujoco_inputs(urdf: str, spawn_xyz: str, spawn_yaw: str,
       <option integrator="implicitfast" cone="elliptic" impratio="10" noslip_iterations="5">
         <flag multiccd="enable" sleep="enable"/>
       </option>
-      <!-- znear is a fraction of the scene's statistic extent (~2 m), so 0.1
-           puts the near plane at ~0.2 m: the D435's minimum range, and far
-           enough that the camera does not render its own housing. -->
+      <!-- znear is a fraction of the scene's statistic extent (2 m), so 0.005
+           puts the near plane at 1 cm: a colour camera has no minimum range,
+           and at the old 0.2 m an arm passing the lens was clipped out of a
+           head-camera picture the real one would have been filled by (issue
+           #59). The camera does not see its own housing at 1 cm (rendered).
+           The depth stream's minimum range is the camera plugin's min_depth. -->
       <visual>
-        <map znear="0.1" zfar="30"/>
+        <map znear="0.005" zfar="30"/>
       </visual>
       <default>
         <default class="visual">

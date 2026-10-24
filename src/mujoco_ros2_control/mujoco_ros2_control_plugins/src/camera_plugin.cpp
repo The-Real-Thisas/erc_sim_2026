@@ -257,6 +257,12 @@ bool CameraPlugin::register_cameras()
     }
     camera.depth_topic = node_->get_parameter(param_ns + "depth_topic").as_string();
 
+    if (!node_->has_parameter(param_ns + "min_depth"))
+    {
+      node_->declare_parameter(param_ns + "min_depth", 0.0);
+    }
+    camera.min_depth = node_->get_parameter(param_ns + "min_depth").as_double();
+
     if (!node_->has_parameter(param_ns + "depth_info_topic"))
     {
       node_->declare_parameter(param_ns + "depth_info_topic", std::string());
@@ -279,6 +285,10 @@ bool CameraPlugin::register_cameras()
     RCLCPP_INFO(node_->get_logger(), "    info_topic: '%s'", camera.info_topic.c_str());
     RCLCPP_INFO(node_->get_logger(), "    image_topic: '%s'", camera.image_topic.c_str());
     RCLCPP_INFO(node_->get_logger(), "    depth_topic: '%s'", camera.depth_topic.c_str());
+    if (camera.min_depth > 0.0)
+    {
+      RCLCPP_INFO(node_->get_logger(), "    min_depth: %.3f m", camera.min_depth);
+    }
     if (!camera.depth_info_topic.empty())
     {
       RCLCPP_INFO(node_->get_logger(), "    depth_info_topic: '%s'", camera.depth_info_topic.c_str());
@@ -631,13 +641,15 @@ void CameraPlugin::render_and_publish_camera(CameraData& camera, const rclcpp::T
   // Fix non-linear depth buffer and flip it vertically (OpenGL's origin is the bottom left)
   // https://github.com/google-deepmind/mujoco/blob/3.4.0/python/mujoco/renderer.py#L190
   auto* depth_out = reinterpret_cast<float*>(camera.depth_image.data.data());
+  const auto min_depth = static_cast<float>(camera.min_depth);
   for (uint32_t h = 0; h < camera.height; ++h)
   {
     const float* src_row = camera.depth_buffer.data() + static_cast<size_t>(h) * camera.width;
     float* dst_row = depth_out + static_cast<size_t>(camera.height - 1 - h) * camera.width;
     for (uint32_t w = 0; w < camera.width; ++w)
     {
-      dst_row[w] = camera_near_distance_ / (1.0f - src_row[w] * camera_depth_scale_);
+      const float z = camera_near_distance_ / (1.0f - src_row[w] * camera_depth_scale_);
+      dst_row[w] = z < min_depth ? 0.0f : z;
     }
   }
 

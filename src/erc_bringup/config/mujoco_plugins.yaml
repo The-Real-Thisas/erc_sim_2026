@@ -77,6 +77,11 @@
           # The competition's Gazebo publishes the depth camera's own info; here
           # it is the colour camera's again, the depth being rendered from it.
           depth_info_topic: "/head_front_camera/head_front_camera/depth/camera_info"
+          # The D435's depth has a minimum range and its colour image has none: the
+          # model's near plane is 1 cm (generate_mujoco_urdf.py), so an arm at the
+          # lens shows in colour, and depth nearer than the competition's own depth
+          # clip (Gazebo's <clip><near>0.2</near>) reads 0, no return.
+          min_depth: 0.2
         spectator:
           frame_name: "spectator_frame"
           info_topic: "/spectator/camera_info"

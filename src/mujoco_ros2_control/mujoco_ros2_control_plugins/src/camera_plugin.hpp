@@ -90,6 +90,11 @@ struct CameraData
   std::string depth_info_topic;  // the same calibration again, as a depth camera's own; empty: not published
   std::string trigger_service_name;
 
+  // Depth nearer than this reads 0, a depth camera's "no return" (0: none). The
+  // colour image is clipped only by the model's near plane, as a real colour
+  // sensor is not, so the two are set apart.
+  double min_depth{ 0.0 };
+
   uint32_t width;
   uint32_t height;
 
@@ -133,6 +138,8 @@ struct CameraData
  *                           # it (the same calibration and frame: the depth is rendered
  *                           # registered to the colour image); nothing unless given
  *     trigger_service_name: <camera_name>/trigger  # only used for polling camera policy
+ *     min_depth: 0.0  # metres; depth nearer than this is published as 0 (no return), as
+ *                     # a RealSense does under its minimum range; 0 keeps every pixel
  *
  * Implementation notes
  * --------------------
